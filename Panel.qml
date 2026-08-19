@@ -139,13 +139,16 @@ Panel {
     return false
   }
 
+  readonly property string clipPath: "/tmp/omarchy-translate-clip.txt"
+  readonly property string inPath: "/tmp/omarchy-translate-in.txt"
+
   function ingestSelection() {
     root.ingesting = true
     root.triedPrimary = false
     if (root.grab === "primary" || root.grab === "auto")
-      paste.command = ["wl-paste", "--no-newline", "--primary"]
+      paste.command = ["bash", "-c", "wl-paste --no-newline --primary > " + root.clipPath]
     else
-      paste.command = ["wl-paste", "--no-newline"]
+      paste.command = ["bash", "-c", "wl-paste --no-newline > " + root.clipPath]
     paste.running = true
   }
 
@@ -184,11 +187,24 @@ Panel {
     debounce.restart()
   }
 
-  function helperCommand(text) {
-    var cmd = [root.helperPath, "--json", "--engine", root.engine, "--from", root.sourceLang, "--to", root.targetLang, "--text", String(text).trim()]
+  readonly property string outPath: "/tmp/omarchy-translate-out.json"
+
+  function helperCommand() {
+    var cmd = [
+      "bash", "-c",
+      "exec \"$1\" --json --engine \"$2\" --from \"$3\" --to \"$4\" --file \"$5\" > \"$6\"",
+      "omarchy-translate",
+      root.helperPath,
+      root.engine,
+      root.sourceLang,
+      root.targetLang,
+      root.inPath,
+      root.outPath
+    ]
     if (root.engine === "libretranslate") {
-      cmd.push("--libretranslate-url", root.libretranslateUrl)
-      if (root.libretranslateKey !== "") cmd.push("--libretranslate-key", root.libretranslateKey)
+      cmd[2] = "exec \"$1\" --json --engine \"$2\" --from \"$3\" --to \"$4\" --file \"$5\" --libretranslate-url \"$7\" --libretranslate-key \"$8\" > \"$6\""
+      cmd.push(root.libretranslateUrl)
+      cmd.push(root.libretranslateKey)
     }
     return cmd
   }
@@ -204,8 +220,11 @@ Panel {
     }
     busy = true
     errorText = ""
-    translator.command = root.helperCommand(text)
-    translator.running = true
+    sourceFile.setText(String(text).trim() + "\n")
+    Qt.callLater(function() {
+      translator.command = root.helperCommand()
+      translator.running = true
+    })
   }
 
   function onTranslation(raw) {
@@ -328,66 +347,172 @@ Panel {
           }
         }
 
-        TextArea {
-          id: sourceEdit
+        Item {
           width: parent.width
           height: Style.space(120)
-          color: root.fg
-          selectionColor: root.selectionTint
-          selectedTextColor: root.fg
-          placeholderText: "Select text and press the keybind, or type here…"
-          placeholderTextColor: Qt.darker(root.fg, 1.6)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          wrapMode: TextArea.Wrap
-          selectByMouse: true
-          persistentSelection: true
-          leftPadding: Style.spacing.controlPaddingX + Border.left(_borderSpec)
-          rightPadding: Style.spacing.controlPaddingX + Border.right(_borderSpec)
-          topPadding: Style.spacing.controlPaddingY + Border.top(_borderSpec)
-          bottomPadding: Style.spacing.controlPaddingY + Border.bottom(_borderSpec)
 
-          readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : (hovered ? "hover-cursor" : "normal"), root.fg, root.accent)
+          HoverHandler {
+            id: sourceHover
+          }
 
-          background: BorderSurface {
-            color: Style.controlFill(sourceEdit.activeFocus, sourceEdit.hovered, root.fg, root.accent)
+          BorderSurface {
+            anchors.fill: parent
+            color: Style.controlFill(sourceEdit.activeFocus, sourceHover.hovered, root.fg, root.accent)
             borderSpec: sourceEdit._borderSpec
             radius: Style.cornerRadius
           }
 
-          onTextChanged: {
-            root.sourceText = text
-            if (!root.ingesting) debounce.restart()
+          Flickable {
+            id: sourceScroll
+            anchors.fill: parent
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+            contentWidth: width
+            contentHeight: Math.max(height, sourceEdit.contentHeight + sourceEdit.topPadding + sourceEdit.bottomPadding)
+            interactive: contentHeight > height
+
+            WheelHandler {
+              acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+              onWheel: function(event) {
+                var dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 8
+                var maxY = Math.max(0, sourceScroll.contentHeight - sourceScroll.height)
+                sourceScroll.contentY = Math.max(0, Math.min(maxY, sourceScroll.contentY - dy))
+                event.accepted = true
+              }
+            }
+
+            TextEdit {
+              id: sourceEdit
+              width: sourceScroll.width
+              height: contentHeight + topPadding + bottomPadding
+              color: root.fg
+              selectionColor: root.selectionTint
+              selectedTextColor: root.fg
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              wrapMode: TextEdit.Wrap
+              selectByMouse: true
+              persistentSelection: true
+              leftPadding: Style.spacing.controlPaddingX + Border.left(_borderSpec)
+              rightPadding: Style.spacing.controlPaddingX + Border.right(_borderSpec)
+              topPadding: Style.spacing.controlPaddingY + Border.top(_borderSpec)
+              bottomPadding: Style.spacing.controlPaddingY + Border.bottom(_borderSpec)
+
+              readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : (sourceHover.hovered ? "hover-cursor" : "normal"), root.fg, root.accent)
+
+              onTextChanged: {
+                root.sourceText = text
+                if (!root.ingesting) debounce.restart()
+              }
+            }
+
+            Text {
+              anchors.left: parent.left
+              anchors.top: parent.top
+              anchors.right: parent.right
+              leftPadding: sourceEdit.leftPadding
+              rightPadding: sourceEdit.rightPadding
+              topPadding: sourceEdit.topPadding
+              text: "Select text and press the keybind, or type here…"
+              color: Qt.darker(root.fg, 1.6)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              wrapMode: Text.WordWrap
+              visible: sourceEdit.text.length === 0
+            }
+
+            ScrollBar.vertical: ScrollBar {
+              policy: sourceScroll.contentHeight > sourceScroll.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+              implicitWidth: 8
+              contentItem: Rectangle {
+                implicitWidth: 6
+                radius: 3
+                color: root.accent
+                opacity: 0.7
+              }
+            }
           }
         }
 
-        TextArea {
-          id: resultEdit
+        Item {
           width: parent.width
           height: Style.space(120)
-          readOnly: true
-          text: root.resultText
-          color: root.fg
-          selectionColor: root.selectionTint
-          selectedTextColor: root.fg
-          placeholderText: root.errorText !== "" ? root.errorText : "Translation…"
-          placeholderTextColor: Qt.darker(root.fg, 1.6)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          wrapMode: TextArea.Wrap
-          selectByMouse: true
-          persistentSelection: true
-          leftPadding: Style.spacing.controlPaddingX + Border.left(_borderSpec)
-          rightPadding: Style.spacing.controlPaddingX + Border.right(_borderSpec)
-          topPadding: Style.spacing.controlPaddingY + Border.top(_borderSpec)
-          bottomPadding: Style.spacing.controlPaddingY + Border.bottom(_borderSpec)
 
-          readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : "normal", root.fg, root.accent)
-
-          background: BorderSurface {
+          BorderSurface {
+            anchors.fill: parent
             color: Style.controlFill(false, false, root.fg, root.accent)
             borderSpec: resultEdit._borderSpec
             radius: Style.cornerRadius
+          }
+
+          Flickable {
+            id: resultScroll
+            anchors.fill: parent
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+            contentWidth: width
+            contentHeight: Math.max(height, resultEdit.contentHeight + resultEdit.topPadding + resultEdit.bottomPadding)
+            interactive: contentHeight > height
+
+            WheelHandler {
+              acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+              onWheel: function(event) {
+                var dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 8
+                var maxY = Math.max(0, resultScroll.contentHeight - resultScroll.height)
+                resultScroll.contentY = Math.max(0, Math.min(maxY, resultScroll.contentY - dy))
+                event.accepted = true
+              }
+            }
+
+            TextEdit {
+              id: resultEdit
+              width: resultScroll.width
+              height: contentHeight + topPadding + bottomPadding
+              readOnly: true
+              text: root.resultText
+              color: root.fg
+              selectionColor: root.selectionTint
+              selectedTextColor: root.fg
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              wrapMode: TextEdit.Wrap
+              selectByMouse: true
+              persistentSelection: true
+              leftPadding: Style.spacing.controlPaddingX + Border.left(_borderSpec)
+              rightPadding: Style.spacing.controlPaddingX + Border.right(_borderSpec)
+              topPadding: Style.spacing.controlPaddingY + Border.top(_borderSpec)
+              bottomPadding: Style.spacing.controlPaddingY + Border.bottom(_borderSpec)
+
+              readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : "normal", root.fg, root.accent)
+            }
+
+            Text {
+              anchors.left: parent.left
+              anchors.top: parent.top
+              anchors.right: parent.right
+              leftPadding: resultEdit.leftPadding
+              rightPadding: resultEdit.rightPadding
+              topPadding: resultEdit.topPadding
+              text: root.errorText !== "" ? root.errorText : "Translation…"
+              color: Qt.darker(root.fg, 1.6)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              wrapMode: Text.WordWrap
+              visible: resultEdit.text.length === 0
+            }
+
+            ScrollBar.vertical: ScrollBar {
+              policy: resultScroll.contentHeight > resultScroll.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+              implicitWidth: 8
+              contentItem: Rectangle {
+                implicitWidth: 6
+                radius: 3
+                color: root.accent
+                opacity: 0.7
+              }
+            }
           }
         }
 
@@ -452,29 +577,56 @@ Panel {
     onTriggered: root.copied = false
   }
 
+  FileView {
+    id: clipFile
+    path: root.clipPath
+    printErrors: false
+    onLoaded: root.onPasted(text())
+    onLoadFailed: function() {
+      if (root.ingesting)
+        root.onPasted("")
+    }
+  }
+
+  FileView {
+    id: sourceFile
+    path: root.inPath
+    printErrors: false
+  }
+
   Process {
     id: paste
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.onPasted(String(text || ""))
-    }
     onExited: function(code) {
-      if (code !== 0 && root.ingesting)
+      if (code !== 0 && root.ingesting && !(root.grab === "auto" && !root.triedPrimary)) {
         root.onPasted("")
+        return
+      }
+      clipFile.reload()
+    }
+  }
+
+  FileView {
+    id: outFile
+    path: root.outPath
+    printErrors: false
+    onLoaded: root.onTranslation(text())
+    onLoadFailed: function() {
+      if (root.busy) {
+        root.busy = false
+        root.errorText = "Translation failed"
+      }
     }
   }
 
   Process {
     id: translator
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.onTranslation(String(text || ""))
-    }
     onExited: function(code) {
       if (code !== 0) {
         root.busy = false
         root.errorText = "Translation failed"
+        return
       }
+      outFile.reload()
     }
   }
 }
