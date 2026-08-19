@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.antunesales-dev.translate",
+  "name": "Translate",
+  "version": "1.0.0",
+  "author": "Tiago Sales",
+  "license": "MIT",
+  "description": "Translate selected or copied text from the Omarchy bar. Auto-detects the source language and translates into the system language.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Translate",
+    "description": "Translate selected or copied text into the system language",
+    "category": "Utilities",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

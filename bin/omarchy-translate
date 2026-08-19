@@ -1,0 +1,865 @@
+#!/usr/bin/env python3
+"""Translate selected or copied text in a floating Omarchy TUI."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import locale
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
+import tomllib
+from dataclasses import asdict, dataclass, fields
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+CONFIG_DIR = Path.home() / ".config" / "omarchy-translate"
+CONFIG_PATH = CONFIG_DIR / "config.toml"
+APP_NAME = "omarchy-translate"
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+ENGINES = ("google", "mymemory", "libretranslate")
+GRAB_MODES = ("clipboard", "primary", "auto")
+
+LANGUAGES: list[tuple[str, str]] = [
+    ("auto", "Detect language"),
+    ("en", "English"),
+    ("pt", "Portuguese"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("nl", "Dutch"),
+    ("pl", "Polish"),
+    ("ru", "Russian"),
+    ("uk", "Ukrainian"),
+    ("tr", "Turkish"),
+    ("ar", "Arabic"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("zh-CN", "Chinese (Simplified)"),
+    ("zh-TW", "Chinese (Traditional)"),
+    ("id", "Indonesian"),
+    ("vi", "Vietnamese"),
+    ("th", "Thai"),
+    ("cs", "Czech"),
+    ("el", "Greek"),
+    ("sv", "Swedish"),
+    ("da", "Danish"),
+    ("fi", "Finnish"),
+    ("no", "Norwegian"),
+    ("ro", "Romanian"),
+    ("hu", "Hungarian"),
+    ("bg", "Bulgarian"),
+    ("hr", "Croatian"),
+    ("sk", "Slovak"),
+    ("sl", "Slovenian"),
+    ("lt", "Lithuanian"),
+    ("lv", "Latvian"),
+    ("et", "Estonian"),
+    ("ca", "Catalan"),
+    ("gl", "Galician"),
+    ("eu", "Basque"),
+    ("ga", "Irish"),
+    ("cy", "Welsh"),
+    ("is", "Icelandic"),
+    ("fa", "Persian"),
+    ("ur", "Urdu"),
+    ("bn", "Bengali"),
+    ("ta", "Tamil"),
+    ("te", "Telugu"),
+    ("ms", "Malay"),
+    ("fil", "Filipino"),
+    ("sw", "Swahili"),
+    ("af", "Afrikaans"),
+    ("eo", "Esperanto"),
+]
+
+LANG_NAME = {code: name for code, name in LANGUAGES}
+TARGET_LANGUAGES = [(code, name) for code, name in LANGUAGES if code != "auto"]
+
+
+@dataclass
+class Config:
+    target: str = "auto"
+    source: str = "auto"
+    engine: str = "google"
+    grab: str = "clipboard"
+    copy_result: bool = False
+    libretranslate_url: str = "http://127.0.0.1:5000"
+    libretranslate_api_key: str = ""
+
+    def resolved_target(self) -> str:
+        if self.target in ("", "auto", "system"):
+            return system_language()
+        return normalize_lang(self.target)
+
+    def resolved_source(self) -> str:
+        if self.source in ("", "auto", "detect"):
+            return "auto"
+        return normalize_lang(self.source)
+
+
+@dataclass
+class Translation:
+    text: str
+    source: str
+    target: str
+    engine: str
+    detected: str = ""
+
+
+def normalize_lang(code: str) -> str:
+    raw = (code or "").strip().replace("_", "-")
+    if not raw:
+        return "en"
+    parts = raw.split("-")
+    lang = parts[0].lower()
+    region = parts[1].upper() if len(parts) > 1 else ""
+    aliases = {
+        "nb": "no",
+        "nn": "no",
+        "iw": "he",
+        "in": "id",
+        "jw": "jv",
+        "cmn": "zh-CN",
+        "fil": "fil",
+        "tl": "fil",
+    }
+    if lang in aliases and lang not in ("fil",):
+        lang = aliases[lang]
+    if lang == "zh":
+        if region in {"TW", "HK", "MO", "HANT"}:
+            return "zh-TW"
+        return "zh-CN"
+    if lang == "pt":
+        return "pt"
+    return lang
+
+
+def system_language() -> str:
+    for key in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        value = os.environ.get(key, "")
+        if value and value not in {"C", "C.UTF-8", "POSIX"}:
+            return normalize_lang(value.split(".")[0])
+    try:
+        loc = locale.getlocale(locale.LC_MESSAGES)
+    except (ValueError, AttributeError):
+        loc = locale.getlocale()
+    if loc and loc[0]:
+        return normalize_lang(loc[0])
+    return "en"
+
+
+def lang_label(code: str) -> str:
+    if code in ("", "auto"):
+        return "Detect"
+    return LANG_NAME.get(code, code)
+
+
+def default_config() -> Config:
+    return Config()
+
+
+def load_config() -> Config:
+    cfg = default_config()
+    if not CONFIG_PATH.is_file():
+        return cfg
+    try:
+        data = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        fail(f"Could not read {CONFIG_PATH}: {exc}")
+    known = {item.name for item in fields(Config)}
+    values = {}
+    for key, value in data.items():
+        if key in known:
+            values[key] = value
+    for key, value in values.items():
+        setattr(cfg, key, value)
+    if cfg.engine not in ENGINES:
+        cfg.engine = "google"
+    if cfg.grab not in GRAB_MODES:
+        cfg.grab = "clipboard"
+    return cfg
+
+
+def toml_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def save_config(cfg: Config) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    body = (
+        "# omarchy-translate preferences\n"
+        "# target = auto uses the system language from LANG/LC_MESSAGES.\n"
+        f'target = "{toml_escape(cfg.target)}"\n'
+        f'source = "{toml_escape(cfg.source)}"\n'
+        f'engine = "{toml_escape(cfg.engine)}"\n'
+        f'grab = "{toml_escape(cfg.grab)}"\n'
+        f"copy_result = {'true' if cfg.copy_result else 'false'}\n"
+        f'libretranslate_url = "{toml_escape(cfg.libretranslate_url)}"\n'
+        f'libretranslate_api_key = "{toml_escape(cfg.libretranslate_api_key)}"\n'
+    )
+    fd, tmp_name = tempfile.mkstemp(prefix="config.", suffix=".toml", dir=CONFIG_DIR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        os.replace(tmp_name, CONFIG_PATH)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def http_json(
+    url: str,
+    *,
+    data: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: int = 15,
+) -> object:
+    req_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    if headers:
+        req_headers.update(headers)
+    request = Request(url, data=data, headers=req_headers, method="POST" if data else "GET")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:240]
+        raise RuntimeError(f"HTTP {exc.code} from translation service: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Could not reach translation service: {exc.reason}") from exc
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Translation service returned invalid JSON") from exc
+
+
+def translate_google(text: str, source: str, target: str) -> Translation:
+    params = urlencode(
+        {
+            "client": "gtx",
+            "sl": source,
+            "tl": target,
+            "dt": "t",
+            "dj": "1",
+            "q": text,
+        }
+    )
+    payload = http_json(f"https://translate.googleapis.com/translate_a/single?{params}")
+    if not isinstance(payload, dict):
+        raise RuntimeError("Unexpected Google Translate response")
+    sentences = payload.get("sentences") or []
+    translated = "".join(str(item.get("trans") or "") for item in sentences if isinstance(item, dict))
+    detected = str(payload.get("src") or "")
+    if not translated:
+        raise RuntimeError("Google Translate returned an empty result")
+    return Translation(
+        text=translated,
+        source=source,
+        target=target,
+        engine="google",
+        detected=normalize_lang(detected) if detected else "",
+    )
+
+
+def translate_mymemory(text: str, source: str, target: str) -> Translation:
+    pair = f"{'Autodetect' if source == 'auto' else source}|{target}"
+    params = urlencode({"q": text, "langpair": pair})
+    payload = http_json(f"https://api.mymemory.translated.net/get?{params}")
+    if not isinstance(payload, dict):
+        raise RuntimeError("Unexpected MyMemory response")
+    status = payload.get("responseStatus")
+    data = payload.get("responseData") or {}
+    if status not in (200, "200") or not isinstance(data, dict):
+        detail = payload.get("responseDetails") or "MyMemory request failed"
+        raise RuntimeError(str(detail))
+    translated = str(data.get("translatedText") or "").strip()
+    if not translated:
+        raise RuntimeError("MyMemory returned an empty result")
+    detected = str(data.get("detectedLanguage") or "")
+    return Translation(
+        text=translated,
+        source=source,
+        target=target,
+        engine="mymemory",
+        detected=normalize_lang(detected) if detected else "",
+    )
+
+
+def translate_libretranslate(cfg: Config, text: str, source: str, target: str) -> Translation:
+    base = (cfg.libretranslate_url or "").rstrip("/")
+    if not base:
+        raise RuntimeError("Set libretranslate_url in preferences first")
+    body: dict[str, str] = {
+        "q": text,
+        "source": "auto" if source == "auto" else source,
+        "target": target,
+        "format": "text",
+    }
+    if cfg.libretranslate_api_key:
+        body["api_key"] = cfg.libretranslate_api_key
+    payload = http_json(
+        f"{base}/translate",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError("Unexpected LibreTranslate response")
+    if payload.get("error"):
+        raise RuntimeError(str(payload["error"]))
+    translated = str(payload.get("translatedText") or "").strip()
+    if not translated:
+        raise RuntimeError("LibreTranslate returned an empty result")
+    detected = str(payload.get("detectedLanguage") or "")
+    if isinstance(payload.get("detectedLanguage"), dict):
+        detected = str(payload["detectedLanguage"].get("language") or "")
+    return Translation(
+        text=translated,
+        source=source,
+        target=target,
+        engine="libretranslate",
+        detected=normalize_lang(detected) if detected else "",
+    )
+
+
+def translate_text(cfg: Config, text: str, source: str | None = None, target: str | None = None) -> Translation:
+    cleaned = text.strip()
+    if not cleaned:
+        raise RuntimeError("No text to translate")
+    src = cfg.resolved_source() if source is None else source
+    dst = cfg.resolved_target() if target is None else target
+    if src != "auto" and src == dst:
+        return Translation(text=cleaned, source=src, target=dst, engine=cfg.engine, detected=src)
+    if cfg.engine == "mymemory":
+        return translate_mymemory(cleaned, src, dst)
+    if cfg.engine == "libretranslate":
+        return translate_libretranslate(cfg, cleaned, src, dst)
+    return translate_google(cleaned, src, dst)
+
+
+def have(cmd: str) -> bool:
+    return shutil.which(cmd) is not None
+
+
+def run(cmd: list[str], *, input_text: str | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        input=input_text,
+        text=True,
+        capture_output=True,
+        check=check,
+    )
+
+
+def wl_paste(selection: str) -> str:
+    if not have("wl-paste"):
+        return ""
+    args = ["wl-paste", "--no-newline"]
+    if selection == "primary":
+        args.append("--primary")
+    result = run(args)
+    if result.returncode != 0:
+        return ""
+    return result.stdout
+
+
+def wl_copy(text: str) -> bool:
+    if not have("wl-copy"):
+        return False
+    result = run(["wl-copy", "--trim-newline"], input_text=text)
+    return result.returncode == 0
+
+
+def grab_text(cfg: Config) -> str:
+    if cfg.grab == "primary":
+        return wl_paste("primary").strip()
+    if cfg.grab == "auto":
+        return (wl_paste("primary") or wl_paste("clipboard")).strip()
+    return wl_paste("clipboard").strip()
+
+
+def fail(message: str, code: int = 1) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def tty() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def gum_available() -> bool:
+    return have("gum")
+
+
+def gum(args: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    return run(["gum", *args], input_text=input_text)
+
+
+def wrap_block(title: str, body: str, width: int) -> str:
+    inner = max(24, width - 4)
+    lines = [title, ""]
+    for paragraph in body.splitlines() or [""]:
+        if not paragraph.strip():
+            lines.append("")
+            continue
+        lines.extend(textwrap.wrap(paragraph, width=inner) or [""])
+    return "\n".join(lines)
+
+
+def style_block(title: str, body: str, width: int, color: str = "212") -> str:
+    text = wrap_block(title, body, width)
+    if not gum_available():
+        return text
+    result = gum(
+        [
+            "style",
+            "--border",
+            "rounded",
+            "--padding",
+            "0 1",
+            "--width",
+            str(width),
+            "--border-foreground",
+            color,
+        ],
+        input_text=text,
+    )
+    return result.stdout if result.returncode == 0 and result.stdout else text
+
+
+def term_width() -> int:
+    try:
+        return max(48, min(88, shutil.get_terminal_size().columns))
+    except OSError:
+        return 72
+
+
+def choose(header: str, options: list[tuple[str, str]], *, height: int = 10) -> str | None:
+    if not options:
+        return None
+    if gum_available():
+        labeled = [f"{label}:{value}" for value, label in options]
+        result = gum(
+            [
+                "choose",
+                "--header",
+                header,
+                "--label-delimiter",
+                ":",
+                "--height",
+                str(min(height, max(3, len(labeled)))),
+                *labeled,
+            ]
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+    print(header)
+    for index, (value, label) in enumerate(options, start=1):
+        print(f"  {index}) {label}")
+    try:
+        raw = input("> ").strip()
+    except EOFError:
+        return None
+    if raw.isdigit() and 1 <= int(raw) <= len(options):
+        return options[int(raw) - 1][0]
+    for value, label in options:
+        if raw.lower() in {value.lower(), label.lower()}:
+            return value
+    return None
+
+
+def filter_choice(header: str, options: list[tuple[str, str]]) -> str | None:
+    if gum_available():
+        labeled = [f"{label} ({value})" for value, label in options]
+        result = gum(["filter", "--placeholder", header, "--header", header], input_text="\n".join(labeled))
+        if result.returncode != 0:
+            return None
+        picked = result.stdout.strip()
+        if picked.endswith(")") and "(" in picked:
+            return picked[picked.rfind("(") + 1 : -1]
+        return picked or None
+    return choose(header, options, height=12)
+
+
+def confirm(prompt: str, default: bool = False) -> bool:
+    if gum_available():
+        args = ["confirm", prompt]
+        if default:
+            args.append("--default")
+        return gum(args).returncode == 0
+    suffix = "Y/n" if default else "y/N"
+    try:
+        raw = input(f"{prompt} [{suffix}] ").strip().lower()
+    except EOFError:
+        return default
+    if not raw:
+        return default
+    return raw in {"y", "yes"}
+
+
+def ask(prompt: str, value: str = "", password: bool = False) -> str | None:
+    if gum_available():
+        args = ["input", "--prompt", f"{prompt}> ", "--value", value, "--placeholder", value or prompt]
+        if password:
+            args.append("--password")
+        result = gum(args)
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+    try:
+        typed = input(f"{prompt} [{value}]: ").strip()
+    except EOFError:
+        return None
+    return typed if typed else value
+
+
+def notify(message: str) -> None:
+    if have("omarchy-notification-send"):
+        run(["omarchy-notification-send", "-g", "󰗊", message])
+    elif have("notify-send"):
+        run(["notify-send", "-a", APP_NAME, message])
+
+
+def show_result(source_text: str, result: Translation, cfg: Config) -> None:
+    width = term_width()
+    detected = result.detected or (result.source if result.source != "auto" else "?")
+    title = (
+        f"Translate  {lang_label(detected)} → {lang_label(result.target)}"
+        f"   ·   {result.engine}"
+    )
+    if gum_available():
+        heading = gum(["style", "--bold", "--foreground", "212", title]).stdout.rstrip()
+        original = style_block("Original", source_text, width, "240")
+        translated = style_block("Translation", result.text, width, "212")
+        print()
+        print(heading)
+        print(original)
+        print(translated)
+        print()
+    else:
+        print(title)
+        print()
+        print(source_text)
+        print()
+        print(result.text)
+        print()
+    if cfg.copy_result:
+        if wl_copy(result.text):
+            print("Copied translation to clipboard.")
+        else:
+            print("Could not copy translation (wl-copy missing).", file=sys.stderr)
+
+
+def pick_language(header: str, include_auto: bool, current: str) -> str | None:
+    options = LANGUAGES if include_auto else TARGET_LANGUAGES
+    if current:
+        options = sorted(options, key=lambda item: item[0] != current)
+    return filter_choice(header, options)
+
+
+def translate_with_spinner(cfg: Config, text: str, source: str | None = None, target: str | None = None) -> Translation:
+    if tty():
+        print("Translating…")
+    return translate_text(cfg, text, source=source, target=target)
+
+
+def result_actions_clean(cfg: Config, source_text: str, result: Translation) -> None:
+    current_source = source_text
+    current = result
+    while True:
+        detected = current.detected or current.source
+        action = choose(
+            "What next?",
+            [
+                ("copy", "Copy translation"),
+                ("swap", "Swap languages"),
+                ("target", "Change target language"),
+                ("source", "Change source language"),
+                ("engine", "Change engine"),
+                ("prefs", "Preferences"),
+                ("again", "Translate again"),
+                ("quit", "Close"),
+            ],
+            height=10,
+        )
+        if action in (None, "quit"):
+            return
+        if action == "copy":
+            if wl_copy(current.text):
+                print("Copied.")
+                notify("Translation copied")
+            else:
+                print("wl-copy is not available.")
+            continue
+        if action == "swap":
+            if detected in ("", "auto"):
+                print("Cannot swap until a source language is detected.")
+                continue
+            incoming = current.text
+            cfg.source = current.target
+            cfg.target = detected
+            current = translate_with_spinner(cfg, incoming, source=cfg.source, target=cfg.target)
+            current_source = incoming
+            show_result(current_source, current, cfg)
+            continue
+        if action == "target":
+            picked = pick_language("Translate to", include_auto=False, current=current.target)
+            if not picked:
+                continue
+            cfg.target = picked
+            current = translate_with_spinner(
+                cfg, current_source, source=cfg.resolved_source(), target=picked
+            )
+            show_result(current_source, current, cfg)
+            continue
+        if action == "source":
+            picked = pick_language("Translate from", include_auto=True, current=detected)
+            if not picked:
+                continue
+            cfg.source = picked
+            current = translate_with_spinner(
+                cfg, current_source, source=picked, target=cfg.resolved_target()
+            )
+            show_result(current_source, current, cfg)
+            continue
+        if action == "engine":
+            picked = choose(
+                "Engine",
+                [
+                    ("google", "Google (free unofficial endpoint)"),
+                    ("mymemory", "MyMemory (free, no key)"),
+                    ("libretranslate", "LibreTranslate (open source)"),
+                ],
+            )
+            if not picked:
+                continue
+            cfg.engine = picked
+            current = translate_with_spinner(cfg, current_source)
+            show_result(current_source, current, cfg)
+            continue
+        if action == "prefs":
+            preferences_tui(cfg)
+            current = translate_with_spinner(cfg, current_source)
+            show_result(current_source, current, cfg)
+            continue
+        if action == "again":
+            current = translate_with_spinner(cfg, current_source)
+            show_result(current_source, current, cfg)
+
+
+def preferences_tui(cfg: Config) -> None:
+    while True:
+        target_label = (
+            f"System ({lang_label(system_language())})"
+            if cfg.target in ("auto", "system", "")
+            else lang_label(cfg.target)
+        )
+        source_label = "Detect" if cfg.source in ("auto", "detect", "") else lang_label(cfg.source)
+        action = choose(
+            "Preferences",
+            [
+                ("target", f"Target language    {target_label}"),
+                ("source", f"Source language    {source_label}"),
+                ("engine", f"Engine             {cfg.engine}"),
+                ("grab", f"Read text from     {cfg.grab}"),
+                ("copy", f"Auto-copy result   {'yes' if cfg.copy_result else 'no'}"),
+                ("lt_url", f"LibreTranslate URL {cfg.libretranslate_url or '(unset)'}"),
+                ("lt_key", "LibreTranslate API key"),
+                ("save", "Save and back"),
+                ("quit", "Discard and back"),
+            ],
+            height=12,
+        )
+        if action in (None, "quit"):
+            return
+        if action == "save":
+            save_config(cfg)
+            print(f"Saved {CONFIG_PATH}")
+            return
+        if action == "target":
+            options = [("auto", f"System language ({lang_label(system_language())})"), *TARGET_LANGUAGES]
+            picked = filter_choice("Target language", options)
+            if picked:
+                cfg.target = picked
+        elif action == "source":
+            picked = pick_language("Source language", include_auto=True, current=cfg.source)
+            if picked:
+                cfg.source = picked
+        elif action == "engine":
+            picked = choose(
+                "Engine",
+                [
+                    ("google", "Google (free unofficial endpoint)"),
+                    ("mymemory", "MyMemory (free, no key, daily limit)"),
+                    ("libretranslate", "LibreTranslate (open source, needs URL/key)"),
+                ],
+            )
+            if picked:
+                cfg.engine = picked
+        elif action == "grab":
+            picked = choose(
+                "Where should text come from?",
+                [
+                    ("clipboard", "Clipboard (after the keybind copies the selection)"),
+                    ("primary", "Primary selection (highlighted text)"),
+                    ("auto", "Primary if set, otherwise clipboard"),
+                ],
+            )
+            if picked:
+                cfg.grab = picked
+        elif action == "copy":
+            cfg.copy_result = confirm("Copy the translation automatically?", default=cfg.copy_result)
+        elif action == "lt_url":
+            typed = ask("LibreTranslate URL", cfg.libretranslate_url)
+            if typed is not None:
+                cfg.libretranslate_url = typed
+        elif action == "lt_key":
+            typed = ask("LibreTranslate API key", cfg.libretranslate_api_key, password=True)
+            if typed is not None:
+                cfg.libretranslate_api_key = typed
+
+
+def prompt_for_text() -> str:
+    typed = ask("Text to translate", "")
+    return (typed or "").strip()
+
+
+def run_tui(cfg: Config, text: str | None) -> int:
+    source_text = (text or "").strip() or grab_text(cfg)
+    if not source_text:
+        if tty():
+            print("No selected or copied text found.")
+            source_text = prompt_for_text()
+        if not source_text:
+            notify("No text to translate")
+            fail("No text to translate", 2)
+    try:
+        result = translate_with_spinner(cfg, source_text)
+    except RuntimeError as exc:
+        if tty():
+            print(f"Translation failed: {exc}")
+            if confirm("Open preferences?"):
+                preferences_tui(cfg)
+                return 0
+        fail(str(exc))
+    show_result(source_text, result, cfg)
+    if tty():
+        result_actions_clean(cfg, source_text, result)
+    elif cfg.copy_result:
+        wl_copy(result.text)
+    return 0
+
+
+def emit_json(result: Translation) -> None:
+    print(json.dumps(asdict(result), ensure_ascii=False))
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog=APP_NAME,
+        description="Translate selected or copied text in an Omarchy TUI.",
+    )
+    parser.add_argument("command", nargs="?", choices=("prefs", "init"), help="prefs opens settings; init writes the default config")
+    parser.add_argument("--text", help="Translate this text instead of the clipboard")
+    parser.add_argument("--file", help="Read text to translate from a file")
+    parser.add_argument("--stdin", action="store_true", help="Read text to translate from stdin")
+    parser.add_argument("--from", dest="source", help="Source language code, or auto")
+    parser.add_argument("--to", dest="target", help="Target language code, or auto for the system language")
+    parser.add_argument("--engine", choices=ENGINES, help="Override the configured engine")
+    parser.add_argument("--grab", choices=GRAB_MODES, help="Where to read text from")
+    parser.add_argument("--libretranslate-url", help="LibreTranslate base URL")
+    parser.add_argument("--libretranslate-key", help="LibreTranslate API key")
+    parser.add_argument("--json", action="store_true", help="Print a JSON result and exit")
+    parser.add_argument("--copy", action="store_true", help="Copy the translation to the clipboard")
+    parser.add_argument("--print-target", action="store_true", help="Print the resolved target language and exit")
+    return parser.parse_args(argv)
+
+
+def read_input_text(args: argparse.Namespace, cfg: Config) -> str:
+    if args.text:
+        return args.text.strip()
+    if args.file:
+        return Path(args.file).read_text(encoding="utf-8").strip()
+    if args.stdin or (not tty() and not sys.stdin.isatty()):
+        return sys.stdin.read().strip()
+    return grab_text(cfg)
+
+
+def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
+    if args.source:
+        cfg.source = args.source
+    if args.target:
+        cfg.target = args.target
+    if args.engine:
+        cfg.engine = args.engine
+    if args.grab:
+        cfg.grab = args.grab
+    if args.copy:
+        cfg.copy_result = True
+    if args.libretranslate_url:
+        cfg.libretranslate_url = args.libretranslate_url
+    if args.libretranslate_key is not None and args.libretranslate_key != "":
+        cfg.libretranslate_api_key = args.libretranslate_key
+    return cfg
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    cfg = apply_overrides(load_config(), args)
+
+    if args.print_target:
+        print(cfg.resolved_target())
+        return 0
+
+    if args.command == "init":
+        save_config(cfg)
+        print(CONFIG_PATH)
+        return 0
+
+    if args.command == "prefs":
+        if not tty():
+            fail("Preferences need a terminal")
+        preferences_tui(cfg)
+        return 0
+
+    if args.json:
+        source_text = read_input_text(args, cfg)
+        result = translate_text(cfg, source_text)
+        if args.copy or cfg.copy_result:
+            wl_copy(result.text)
+        emit_json(result)
+        return 0
+
+    if (args.text or args.file or args.stdin) and not tty():
+        result = translate_text(cfg, read_input_text(args, cfg))
+        if args.copy or cfg.copy_result:
+            wl_copy(result.text)
+        print(result.text)
+        return 0
+
+    return run_tui(cfg, args.text)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130)
+    except RuntimeError as exc:
+        fail(str(exc))

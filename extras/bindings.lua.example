@@ -1,0 +1,35 @@
+-- Copy the current selection, then open the Translate panel.
+-- Add to ~/.config/hypr/bindings.lua
+
+local function send_shortcut_once(mods, key)
+  return function()
+    hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = key, state = "down" }))
+    hl.timer(function()
+      hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = key, state = "up" }))
+    end, { timeout = 50, type = "oneshot" })
+  end
+end
+
+local function active_window_is_terminal()
+  local window = hl.get_active_window()
+  if not window then
+    return false
+  end
+  for _, tag in ipairs(window.tags or {}) do
+    if tag:gsub("%*$", "") == "terminal" then
+      return true
+    end
+  end
+  return false
+end
+
+o.bind("SUPER + SHIFT + T", "Translate selection", function()
+  if active_window_is_terminal() then
+    send_shortcut_once("CTRL", "Insert")()
+  else
+    send_shortcut_once("CTRL", "C")()
+  end
+  hl.timer(function()
+    hl.exec_cmd("omarchy-shell shell summon io.github.antunesales-dev.translate '{}'")
+  end, { timeout = 180, type = "oneshot" })
+end)
