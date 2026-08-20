@@ -404,9 +404,13 @@ Panel {
       id: hover
     }
 
+    readonly property color boxFill: Style.controlFill(editor.activeFocus, hover.hovered, root.fg, root.accent)
+    readonly property bool boxFillLight: boxFill.a > 0.4 && (0.2126 * boxFill.r + 0.7152 * boxFill.g + 0.0722 * boxFill.b) > 0.55
+    readonly property color boxInk: boxFillLight ? "#000000" : root.fg
+
     BorderSurface {
       anchors.fill: parent
-      color: Style.controlFill(editor.activeFocus, hover.hovered, root.fg, root.accent)
+      color: field.boxFill
       borderSpec: editor._borderSpec
       radius: Style.cornerRadius
     }
@@ -434,9 +438,9 @@ Panel {
         id: editor
         width: Math.max(1, flick.width - root.scrollGutter)
         height: contentHeight + topPadding + bottomPadding
-        color: root.fg
+        color: field.boxInk
         selectionColor: root.selectionTint
-        selectedTextColor: root.fg
+        selectedTextColor: field.boxInk
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
         wrapMode: TextEdit.Wrap
@@ -474,7 +478,7 @@ Panel {
         rightPadding: editor.rightPadding
         topPadding: editor.topPadding
         text: field.placeholder
-        color: Qt.darker(root.fg, 1.6)
+        color: Qt.darker(field.boxInk, 1.6)
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
         wrapMode: Text.WordWrap

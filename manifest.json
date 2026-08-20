@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.antunesales-dev.translate",
   "name": "Translate",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "Tiago Sales",
   "license": "MIT",
   "description": "Translate selected, copied, OCR'd, or dropped text. Skips same-language, redacts secrets, glossary, cache, and word lookup.",
