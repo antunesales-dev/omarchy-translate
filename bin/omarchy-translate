@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import locale
 import os
@@ -33,6 +34,28 @@ ENGINES = ("google", "mymemory", "libretranslate")
 GRAB_MODES = ("clipboard", "primary", "auto")
 HISTORY_PATH = CONFIG_DIR / "history.json"
 HISTORY_MAX = 20
+CACHE_PATH = CONFIG_DIR / "cache.json"
+CACHE_MAX = 200
+GLOSSARY_PATH = CONFIG_DIR / "glossary.json"
+DEFAULT_GLOSSARY = [
+    "Omarchy",
+    "Hyprland",
+    "Quickshell",
+    "Wayland",
+    "GitHub",
+    "Grok",
+    "NVIDIA",
+    "Alacritty",
+]
+EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
+URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
+SECRET_RE = re.compile(
+    r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"
+    r"|\bsk-[A-Za-z0-9]{20,}\b"
+    r"|\bxox[baprs]-[A-Za-z0-9-]{10,}\b"
+    r"|\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"
+    r"|\bAKIA[0-9A-Z]{16}\b"
+)
 HTML_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 LIST_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 SPEAK_VOICES = {
@@ -156,6 +179,10 @@ class Translation:
     target: str
     engine: str
     detected: str = ""
+    skipped: bool = False
+    cached: bool = False
+    redacted: bool = False
+    definition: str = ""
 
 
 def normalize_lang(code: str) -> str:
@@ -496,26 +523,234 @@ def engine_order(cfg: Config) -> list[str]:
     return order
 
 
+def load_glossary() -> list[str]:
+    terms = list(DEFAULT_GLOSSARY)
+    if GLOSSARY_PATH.is_file():
+        try:
+            data = json.loads(GLOSSARY_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                terms.extend(str(item) for item in data if str(item).strip())
+            elif isinstance(data, dict):
+                terms.extend(str(k) for k in data.keys() if str(k).strip())
+        except (OSError, json.JSONDecodeError):
+            pass
+    seen = set()
+    out = []
+    for term in terms:
+        key = term.casefold()
+        if key not in seen:
+            seen.add(key)
+            out.append(term)
+    return sorted(out, key=len, reverse=True)
+
+
+def protect_terms(text: str, terms: list[str]) -> tuple[str, dict[str, str]]:
+    mapping: dict[str, str] = {}
+    protected = text
+    for i, term in enumerate(terms):
+        pattern = re.compile(r"\b" + re.escape(term) + r"\b", re.I)
+        token = f"GLS{i}X"
+        if pattern.search(protected):
+            mapping[token] = term
+            protected = pattern.sub(token, protected)
+    return protected, mapping
+
+
+def redact_secrets(text: str) -> tuple[str, dict[str, str], bool]:
+    mapping: dict[str, str] = {}
+    redacted = text
+    used = False
+
+    def stash(match: re.Match[str], prefix: str) -> str:
+        nonlocal used
+        used = True
+        token = f"{prefix}{len(mapping)}X"
+        mapping[token] = match.group(0)
+        return token
+
+    redacted = URL_RE.sub(lambda m: stash(m, "URL"), redacted)
+    redacted = EMAIL_RE.sub(lambda m: stash(m, "MAIL"), redacted)
+    redacted = SECRET_RE.sub(lambda m: stash(m, "SEC"), redacted)
+    return redacted, mapping, used
+
+
+def restore_tokens(text: str, mapping: dict[str, str]) -> str:
+    restored = text
+    for token, original in mapping.items():
+        restored = restored.replace(token, original)
+        restored = restored.replace(token.lower(), original)
+        restored = restored.replace(token.upper(), original)
+    return restored
+
+
+def cache_key(engine: str, source: str, target: str, text: str) -> str:
+    payload = f"{engine}\n{source}\n{target}\n{text}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def cache_load() -> dict:
+    if not CACHE_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def cache_get(key: str) -> dict | None:
+    item = cache_load().get(key)
+    if not isinstance(item, dict):
+        return None
+    if time.time() - float(item.get("ts") or 0) > 7 * 24 * 3600:
+        return None
+    return item
+
+
+def cache_put(key: str, result: Translation) -> None:
+    data = cache_load()
+    data[key] = {
+        "text": result.text,
+        "detected": result.detected,
+        "engine": result.engine,
+        "ts": int(time.time()),
+    }
+    if len(data) > CACHE_MAX:
+        oldest = sorted(data.items(), key=lambda kv: kv[1].get("ts", 0))[: len(data) - CACHE_MAX]
+        for old_key, _ in oldest:
+            data.pop(old_key, None)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def is_word_query(text: str) -> bool:
+    compact = text.strip()
+    if "\n" in compact:
+        return False
+    words = compact.split()
+    return 1 <= len(words) <= 3 and len(compact) <= 48
+
+
+def fetch_definition(word: str) -> str:
+    cleaned = re.sub(r"[^\w\s'-]", "", word).strip()
+    if not cleaned:
+        return ""
+    slug = cleaned.split()[0]
+    try:
+        payload = http_json(f"https://api.dictionaryapi.dev/api/v2/entries/en/{slug}")
+    except RuntimeError:
+        return ""
+    if not isinstance(payload, list) or not payload:
+        return ""
+    meanings = payload[0].get("meanings") or []
+    if not meanings:
+        return ""
+    defs = meanings[0].get("definitions") or []
+    if not defs:
+        return ""
+    part = meanings[0].get("partOfSpeech") or ""
+    text = str(defs[0].get("definition") or "").strip()
+    if not text:
+        return ""
+    return f"{part}: {text}" if part else text
+
+
+def list_ocr_langs() -> dict:
+    installed: list[str] = []
+    if have("tesseract"):
+        raw = run(["tesseract", "--list-langs"])
+        for line in raw.stdout.splitlines():
+            code = line.strip()
+            if code and code not in {"List of available languages in", "osd"} and not code.endswith(":"):
+                if "/" not in code:
+                    installed.append(code)
+    common = [
+        ("eng", "English"),
+        ("por", "Portuguese"),
+        ("spa", "Spanish"),
+        ("fra", "French"),
+        ("deu", "German"),
+        ("ita", "Italian"),
+        ("jpn", "Japanese"),
+        ("chi_sim", "Chinese Simplified"),
+    ]
+    return {
+        "installed": installed,
+        "available": [{"code": code, "name": name, "installed": code in installed} for code, name in common],
+    }
+
+
 def translate_text(cfg: Config, text: str, source: str | None = None, target: str | None = None) -> Translation:
     cleaned = text.strip()
     if not cleaned:
         raise RuntimeError("No text to translate")
     src = cfg.resolved_source() if source is None else source
     dst = cfg.resolved_target() if target is None else target
-    if src != "auto" and src == dst:
-        result = Translation(text=cleaned, source=src, target=dst, engine=cfg.engine, detected=src)
+
+    glossary = load_glossary()
+    protected, gloss_map = protect_terms(cleaned, glossary)
+    redacted, secret_map, did_redact = redact_secrets(protected)
+    work = redacted
+
+    detected = ""
+    if src == "auto":
+        detected = detect_language(cfg, work)
+    else:
+        detected = src
+
+    if detected and detected == dst:
+        result = Translation(
+            text=cleaned,
+            source=src,
+            target=dst,
+            engine="skip",
+            detected=detected,
+            skipped=True,
+            redacted=did_redact,
+        )
+        if is_word_query(cleaned):
+            result.definition = fetch_definition(cleaned if detected == "en" else "")
         history_add(cleaned, result)
         return result
+
+    key = cache_key(cfg.engine, detected or src, dst, work)
+    cached = cache_get(key)
+    if cached:
+        restored = restore_tokens(restore_tokens(str(cached.get("text") or ""), secret_map), gloss_map)
+        result = Translation(
+            text=restored,
+            source=src,
+            target=dst,
+            engine=str(cached.get("engine") or cfg.engine),
+            detected=str(cached.get("detected") or detected),
+            cached=True,
+            redacted=did_redact,
+        )
+        if is_word_query(cleaned):
+            result.definition = fetch_definition(result.text if dst == "en" else cleaned)
+        history_add(cleaned, result)
+        return result
+
     last_error: Exception | None = None
+    result: Translation | None = None
     for engine in engine_order(cfg):
         try:
-            result = translate_preserving(cfg, engine, cleaned, src, dst)
-            history_add(cleaned, result)
-            return result
+            result = translate_preserving(cfg, engine, work, src, dst)
+            break
         except Exception as exc:  # noqa: BLE001 — try the next engine
             last_error = exc
             continue
-    raise RuntimeError(str(last_error) if last_error else "Translation failed")
+    if result is None:
+        raise RuntimeError(str(last_error) if last_error else "Translation failed")
+
+    result.detected = result.detected or detected
+    result.redacted = did_redact
+    cache_put(key, result)
+    result.text = restore_tokens(restore_tokens(result.text, secret_map), gloss_map)
+    if is_word_query(cleaned):
+        result.definition = fetch_definition(result.text if dst == "en" else cleaned)
+    history_add(cleaned, result)
+    return result
 
 
 def detect_language(cfg: Config, text: str) -> str:
@@ -969,8 +1204,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("prefs", "init", "history", "detect", "speak", "setup-lt"),
-        help="prefs, init, history, detect, speak, or setup-lt",
+        choices=("prefs", "init", "history", "detect", "speak", "setup-lt", "ocr-langs"),
+        help="prefs, init, history, detect, speak, setup-lt, or ocr-langs",
     )
     parser.add_argument("--text", help="Translate this text instead of the clipboard")
     parser.add_argument("--file", help="Read text to translate from a file")
@@ -1048,6 +1283,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "speak":
         speak_text(read_input_text(args, cfg), args.source or cfg.resolved_target())
+        return 0
+
+    if args.command == "ocr-langs":
+        print(json.dumps(list_ocr_langs(), ensure_ascii=False))
         return 0
 
     if args.command == "setup-lt":

@@ -88,6 +88,9 @@ Panel {
   property string resultText: ""
   property string detectedSrc: ""
   property string errorText: ""
+  property string definitionText: ""
+  property bool skipped: false
+  property bool fromCache: false
   property bool busy: false
   property bool copied: false
   property bool ingesting: false
@@ -258,6 +261,9 @@ Panel {
       resultText = ""
       detectedSrc = ""
       errorText = ""
+      definitionText = ""
+      skipped = false
+      fromCache = false
       busy = false
       return
     }
@@ -308,6 +314,24 @@ Panel {
     }
   }
 
+  function loadDroppedFile(url) {
+    var path = String(url || "").replace(/^file:\/\//, "")
+    var lower = path.toLowerCase()
+    if (lower.indexOf(".txt") < 0 && lower.indexOf(".srt") < 0) return
+    dropFile.path = path
+    dropFile.reload()
+  }
+
+  function installOcrLang(code) {
+    Quickshell.execDetached([
+      "xdg-terminal-exec",
+      "-e",
+      "bash",
+      "-c",
+      "omarchy pkg add tesseract-data-" + code + "; echo; echo Done. Press Enter.; read"
+    ])
+  }
+
   function restoreHistory(item) {
     if (!item) return
     sourceBox.text = item.source || ""
@@ -324,9 +348,12 @@ Panel {
       var payload = JSON.parse(raw)
       resultText = payload.text || ""
       if (root.sourceLang === "auto") detectedSrc = payload.src || payload.detected || ""
+      definitionText = payload.definition || ""
+      skipped = payload.skipped === true
+      fromCache = payload.cached === true
       errorText = ""
       resultBox.resetScroll()
-      if (root.copyResult) root.copyResultToClipboard()
+      if (root.copyResult && !root.skipped) root.copyResultToClipboard()
     } catch (e) {
       errorText = "Could not read the translation"
     }
@@ -344,6 +371,9 @@ Panel {
     resultText = ""
     detectedSrc = ""
     errorText = ""
+    definitionText = ""
+    skipped = false
+    fromCache = false
     sourceBox.resetScroll()
     resultBox.resetScroll()
     debounce.stop()
@@ -477,6 +507,15 @@ Panel {
     Item {
       anchors.fill: parent
       Keys.onEscapePressed: root.close()
+
+      DropArea {
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+        onDropped: function(drop) {
+          if (drop.hasUrls && drop.urls.length)
+            root.loadDroppedFile(String(drop.urls[0]))
+        }
+      }
       Keys.onPressed: function(event) {
         if (event.key === Qt.Key_Tab) {
           root.switchPanel(event.modifiers & Qt.ShiftModifier ? -1 : 1)
@@ -650,6 +689,15 @@ Panel {
             fontFamily: root.fontFamily
             onClicked: root.historyOpen = !root.historyOpen
           }
+          Button {
+            width: Style.space(28)
+            iconText: "󰺯"
+            iconSize: Style.font.body
+            tooltipText: "Install Portuguese OCR language"
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            onClicked: root.installOcrLang("por")
+          }
         }
 
         Item {
@@ -699,7 +747,7 @@ Panel {
             id: transLabel
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: "Translation"
+            text: root.skipped ? ("Already " + (root.detectedSrc || "this language")) : (root.fromCache ? "Translation (cached)" : "Translation")
             color: Qt.darker(root.fg, 1.4)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -726,6 +774,17 @@ Panel {
           readOnly: true
           text: root.resultText
           placeholder: root.errorText !== "" ? root.errorText : "Translation…"
+        }
+
+        Text {
+          width: parent.width
+          visible: root.definitionText !== ""
+          height: visible ? implicitHeight : 0
+          text: root.definitionText
+          color: Qt.darker(root.fg, 1.25)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
         }
 
         Item {
@@ -842,6 +901,16 @@ Panel {
     path: root.inPath
     printErrors: false
     onSaved: root.startHelper()
+  }
+
+  FileView {
+    id: dropFile
+    printErrors: false
+    onLoaded: {
+      sourceBox.text = text()
+      sourceBox.resetScroll()
+      root.translate()
+    }
   }
 
   FileView {

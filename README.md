@@ -78,6 +78,15 @@ omarchy bar move io.github.antunesales-dev.translate --section right
 | `libretranslateKey` | empty | Optional API key |
 
 History is stored in `~/.config/omarchy-translate/history.json`.
+Copy [`config/glossary.example.json`](config/glossary.example.json) to
+`~/.config/omarchy-translate/glossary.json` to keep extra names untranslated.
+
+Same-language text is not sent to a translator. URLs, emails, and common
+API tokens are redacted before a network call. Short selections also
+show an English dictionary gloss. Translations are cached locally for a
+week. Drop a `.txt` or `.srt` file on the panel to translate it. The
+document icon in the toolbar installs Portuguese OCR data
+(`tesseract-data-por`) in a terminal.
 
 ## Engines
 
