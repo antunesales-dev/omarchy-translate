@@ -38,6 +38,9 @@ Item {
     root.resultText = ""
     cursorProc.running = true
     pasteProc.running = true
+    Qt.callLater(function() {
+      if (keyCatcher) keyCatcher.forceActiveFocus()
+    })
   }
 
   function close() {
@@ -88,25 +91,39 @@ Item {
   PanelWindow {
     id: panel
     visible: root.opened
-    implicitWidth: card.width
-    implicitHeight: card.height
+    anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
     WlrLayershell.namespace: "omarchy-translate-popup"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
-    margins {
-      left: Math.max(8, root.cursorX)
-      top: Math.max(8, root.cursorY)
+
+    MouseArea {
+      anchors.fill: parent
+      onClicked: root.dismiss()
     }
 
     BorderSurface {
       id: card
       width: Style.space(360)
       height: col.implicitHeight + Style.space(24)
+      x: Math.min(Math.max(8, root.cursorX), Math.max(8, panel.width - width - 8))
+      y: Math.min(Math.max(8, root.cursorY), Math.max(8, panel.height - height - 8))
       color: root.background
       borderSpec: Border.surfaceSpec("menu", "border", root.border, Math.max(1, Style.space(2)))
       radius: Style.cornerRadius
+
+      MouseArea {
+        anchors.fill: parent
+        onClicked: {}
+      }
+
+      Item {
+        id: keyCatcher
+        anchors.fill: parent
+        focus: true
+        Keys.onEscapePressed: root.dismiss()
+      }
 
       Column {
         id: col
@@ -175,7 +192,6 @@ Item {
         }
       }
 
-      Keys.onEscapePressed: root.dismiss()
     }
   }
 

@@ -7,8 +7,8 @@ panel auto-detects the source language and translates into the **system
 language** (`LANG` / `LC_MESSAGES`), with optional pinned pairs, history,
 speech, OCR, and paste-back.
 
-This is a Quattro `bar-widget` (plus a compact overlay). It runs inside
-the existing `omarchy-shell` process.
+This is a Quattro `bar-widget`. The compact popup is loaded by the bar
+widget. It runs inside the existing `omarchy-shell` process.
 
 License: [MIT](LICENSE).
 

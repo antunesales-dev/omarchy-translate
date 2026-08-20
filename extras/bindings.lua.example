@@ -33,7 +33,7 @@ o.bind("SUPER + SHIFT + T", "Translate selection", function()
     send_shortcut_once("CTRL", "C")()
   end
   hl.timer(function()
-    hl.exec_cmd("omarchy-shell shell summon " .. translate_id .. " '{}'")
+    hl.exec_cmd("omarchy-shell shell toggle " .. translate_id .. " '{}'")
   end, { timeout = 180, type = "oneshot" })
 end)
 

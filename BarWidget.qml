@@ -64,6 +64,18 @@ BarWidget {
     }
   }
 
+  Loader {
+    id: overlayLoader
+    active: true
+    source: Qt.resolvedUrl("Overlay.qml")
+    visible: false
+    onLoaded: {
+      if (!overlayLoader.item) return
+      overlayLoader.item.shell = root.bar && root.bar.shell ? root.bar.shell : null
+      overlayLoader.item.manifest = { id: root.moduleName }
+    }
+  }
+
   IpcHandler {
     target: "io.github.antunesales-dev.translate"
 
