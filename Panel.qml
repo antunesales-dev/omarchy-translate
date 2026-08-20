@@ -54,9 +54,20 @@ Panel {
   ]
 
   readonly property var targetLanguages: {
+    var seen = {}
     var out = [{ label: "System language", value: "auto" }]
-    for (var i = 0; i < root.languages.length; i++)
-      if (root.languages[i].value !== "auto") out.push(root.languages[i])
+    var recents = root.recentTargets || []
+    for (var r = 0; r < recents.length; r++) {
+      for (var i = 0; i < root.languages.length; i++) {
+        if (root.languages[i].value === recents[r] && recents[r] !== "auto") {
+          out.push({ label: "★ " + root.languages[i].label, value: recents[r] })
+          seen[recents[r]] = true
+        }
+      }
+    }
+    for (var j = 0; j < root.languages.length; j++)
+      if (root.languages[j].value !== "auto" && !seen[root.languages[j].value])
+        out.push(root.languages[j])
     return out
   }
 
@@ -82,17 +93,29 @@ Panel {
   property bool ingesting: false
   property bool triedPrimary: false
   property bool translateQueued: false
+  property bool speakQueued: false
+  property string speakLang: "en"
+  property bool pairPinned: root.setting("pairPinned", false) === true || root.setting("pairPinned", false) === "true"
+  property bool watchClipboard: root.setting("watchClipboard", false) === true || root.setting("watchClipboard", false) === "true"
+  property bool historyOpen: false
+  property var recentTargets: []
+  property var historyItems: []
 
   readonly property int boxHeight: Style.space(200)
   readonly property int scrollGutter: 12
   readonly property string clipPath: "/tmp/omarchy-translate-clip.txt"
   readonly property string inPath: "/tmp/omarchy-translate-in.txt"
   readonly property string outPath: "/tmp/omarchy-translate-out.json"
-  readonly property string helperPath: {
+  readonly property string pluginDir: {
     var url = Qt.resolvedUrl(".").toString()
     if (url.indexOf("file://") === 0) url = url.substring(7)
     if (url.length > 1 && url.charAt(url.length - 1) === "/") url = url.substring(0, url.length - 1)
-    return decodeURIComponent(url) + "/bin/omarchy-translate"
+    return decodeURIComponent(url)
+  }
+  readonly property string helperPath: root.pluginDir + "/bin/omarchy-translate"
+  readonly property string historyPath: {
+    var home = Quickshell.env("HOME") || ""
+    return home + "/.config/omarchy-translate/history.json"
   }
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property color accent: Color.accent
@@ -108,9 +131,22 @@ Panel {
     copyResult = root.setting("copyResult", false) === true || root.setting("copyResult", false) === "true"
     libretranslateUrl = root.setting("libretranslateUrl", "http://127.0.0.1:5000")
     libretranslateKey = root.setting("libretranslateKey", "")
+    pairPinned = root.setting("pairPinned", false) === true || root.setting("pairPinned", false) === "true"
+    watchClipboard = root.setting("watchClipboard", false) === true || root.setting("watchClipboard", false) === "true"
+    try { root.recentTargets = JSON.parse(root.setting("recentTargets", "[]")) } catch (e) { root.recentTargets = [] }
     sourceDropdown.value = sourceLang
     targetDropdown.value = targetLang
     engineDropdown.value = engine
+  }
+
+  function rememberTarget(code) {
+    if (!code || code === "auto") return
+    var next = [code]
+    var recents = root.recentTargets || []
+    for (var i = 0; i < recents.length; i++)
+      if (recents[i] !== code) next.push(recents[i])
+    root.recentTargets = next.slice(0, 5)
+    root.persistSettings({ recentTargets: JSON.stringify(root.recentTargets) })
   }
 
   function persistSettings(values) {
@@ -233,10 +269,52 @@ Panel {
   }
 
   function startHelper() {
+    if (root.speakQueued) {
+      root.speakQueued = false
+      speakProc.command = [root.helperPath, "speak", "--from", root.speakLang, "--file", root.inPath]
+      speakProc.running = true
+      return
+    }
     if (!root.translateQueued) return
     root.translateQueued = false
     translator.command = root.helperCommand()
     translator.running = true
+  }
+
+  function speak(which) {
+    var text = which === "source" ? sourceBox.text : root.resultText
+    var lang = which === "source" ? (root.detectedSrc || root.sourceLang) : root.targetLang
+    if (!text || !String(text).trim()) return
+    if (lang === "auto") lang = "en"
+    root.speakLang = lang
+    root.speakQueued = true
+    sourceFile.setText(String(text).trim() + "\n")
+    helperFallback.restart()
+  }
+
+  function pasteBack() {
+    if (!root.resultText) return
+    root.copyResultToClipboard()
+    root.close()
+    Quickshell.execDetached([root.pluginDir + "/bin/omarchy-translate-paste"])
+  }
+
+  function loadHistory(raw) {
+    try {
+      var data = JSON.parse(raw || "[]")
+      root.historyItems = Array.isArray(data) ? data.slice(0, 20) : []
+    } catch (e) {
+      root.historyItems = []
+    }
+  }
+
+  function restoreHistory(item) {
+    if (!item) return
+    sourceBox.text = item.source || ""
+    root.resultText = item.text || ""
+    sourceBox.resetScroll()
+    resultBox.resetScroll()
+    root.historyOpen = false
   }
 
   function onTranslation(raw) {
@@ -418,6 +496,11 @@ Panel {
         if (event.key === Qt.Key_L && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier)) {
           root.clearAll()
           event.accepted = true
+          return
+        }
+        if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier)) {
+          root.pasteBack()
+          event.accepted = true
         }
       }
 
@@ -432,7 +515,7 @@ Panel {
 
           Dropdown {
             id: sourceDropdown
-            width: (parent.width - swapButton.width - Style.space(12)) * 0.5
+            width: (parent.width - swapButton.width - pinButton.width - Style.space(18)) * 0.5
             label: root.detectedSrc !== "" && root.sourceLang === "auto"
               ? ("From · " + root.detectedSrc)
               : "From"
@@ -461,9 +544,24 @@ Panel {
             onClicked: root.swapLanguages()
           }
 
+          Button {
+            id: pinButton
+            width: Style.space(34)
+            iconText: root.pairPinned ? "󰐃" : "󰐄"
+            iconSize: Style.font.title
+            tooltipText: root.pairPinned ? "Unpin language pair" : "Pin this language pair"
+            foreground: root.pairPinned ? root.accent : root.fg
+            fontFamily: root.fontFamily
+            anchors.bottom: parent.bottom
+            onClicked: {
+              root.pairPinned = !root.pairPinned
+              root.persistSettings({ pairPinned: root.pairPinned })
+            }
+          }
+
           Dropdown {
             id: targetDropdown
-            width: (parent.width - swapButton.width - Style.space(12)) * 0.5
+            width: (parent.width - swapButton.width - pinButton.width - Style.space(18)) * 0.5
             label: "To"
             options: root.targetLanguages
             foreground: root.fg
@@ -472,6 +570,7 @@ Panel {
             onChanged: function(value) {
               root.targetLang = value
               root.persistSettings({ targetLang: value })
+              root.rememberTarget(value)
               debounce.restart()
             }
           }
@@ -501,6 +600,78 @@ Panel {
           foreground: root.fg
           font.family: root.fontFamily
           onEditingFinished: root.persistSettings({ libretranslateUrl: text })
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Button {
+            width: Style.space(28)
+            iconText: "󰗮"
+            iconSize: Style.font.body
+            tooltipText: "Speak original"
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            enabled: sourceBox.text !== ""
+            opacity: enabled ? 1 : 0.4
+            onClicked: root.speak("source")
+          }
+          Button {
+            width: Style.space(28)
+            iconText: "󰗯"
+            iconSize: Style.font.body
+            tooltipText: "Speak translation"
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            enabled: root.resultText !== ""
+            opacity: enabled ? 1 : 0.4
+            onClicked: root.speak("result")
+          }
+          Button {
+            width: Style.space(28)
+            iconText: "󰕒"
+            iconSize: Style.font.body
+            tooltipText: "Paste translation into the focused app"
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            enabled: root.resultText !== ""
+            opacity: enabled ? 1 : 0.4
+            onClicked: root.pasteBack()
+          }
+          Button {
+            width: Style.space(28)
+            iconText: root.copyResult ? "󰅒" : "󰅑"
+            iconSize: Style.font.body
+            tooltipText: root.copyResult ? "Auto-copy on" : "Auto-copy off"
+            foreground: root.copyResult ? root.accent : root.fg
+            fontFamily: root.fontFamily
+            onClicked: {
+              root.copyResult = !root.copyResult
+              root.persistSettings({ copyResult: root.copyResult })
+            }
+          }
+          Button {
+            width: Style.space(28)
+            iconText: root.watchClipboard ? "󰕥" : "󰕦"
+            iconSize: Style.font.body
+            tooltipText: root.watchClipboard ? "Clipboard watch on" : "Clipboard watch off"
+            foreground: root.watchClipboard ? root.accent : root.fg
+            fontFamily: root.fontFamily
+            onClicked: {
+              root.watchClipboard = !root.watchClipboard
+              root.persistSettings({ watchClipboard: root.watchClipboard })
+            }
+          }
+          Button {
+            width: Style.space(28)
+            iconText: "󰋚"
+            iconSize: Style.font.body
+            tooltipText: "History"
+            foreground: root.historyOpen ? root.accent : root.fg
+            fontFamily: root.fontFamily
+            onClicked: root.historyOpen = !root.historyOpen
+          }
         }
 
         Text {
@@ -583,6 +754,34 @@ Panel {
             onClicked: root.copyResultToClipboard()
           }
         }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+          visible: root.historyOpen
+          height: visible ? implicitHeight : 0
+
+          Text {
+            text: root.historyItems.length ? "Recent translations" : "No history yet"
+            color: Qt.darker(root.fg, 1.4)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Repeater {
+            model: root.historyItems
+
+            Button {
+              required property var modelData
+              width: contentColumn.width
+              text: String(modelData.source || "").replace(/\n/g, " ").slice(0, 48)
+              tooltipText: String(modelData.text || "").slice(0, 200)
+              foreground: root.fg
+              fontFamily: root.fontFamily
+              onClicked: root.restoreHistory(modelData)
+            }
+          }
+        }
       }
     }
   }
@@ -621,6 +820,19 @@ Panel {
     path: root.inPath
     printErrors: false
     onSaved: root.startHelper()
+  }
+
+  FileView {
+    id: historyFile
+    path: root.historyPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.loadHistory(text())
+    onFileChanged: reload()
+  }
+
+  Process {
+    id: speakProc
   }
 
   Process {

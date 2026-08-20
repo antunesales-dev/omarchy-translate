@@ -2,12 +2,13 @@
 
 ![Translate preview](preview.png)
 
-Translate selected or copied text from the Omarchy bar. The panel
-auto-detects the source language and translates into the **system
-language** (`LANG` / `LC_MESSAGES`).
+Translate selected, copied, or on-screen text from the Omarchy bar. The
+panel auto-detects the source language and translates into the **system
+language** (`LANG` / `LC_MESSAGES`), with optional pinned pairs, history,
+speech, OCR, and paste-back.
 
-This is a Quattro `bar-widget` plugin: one bar icon, one details panel.
-It runs inside the existing `omarchy-shell` process.
+This is a Quattro `bar-widget` (plus a compact overlay). It runs inside
+the existing `omarchy-shell` process.
 
 License: [MIT](LICENSE).
 
@@ -18,33 +19,43 @@ omarchy plugin add https://github.com/antunesales-dev/omarchy-translate.git --en
 ```
 
 Install does **not** change Hyprland keybindings or other user config.
-A keybind is optional; see Usage below.
+Optional binds and menu rows live in [`extras/`](extras/).
 
 ## Usage
 
-**With no text selected:** click the translate icon on the bar. The panel
-opens empty so you can type. Translation updates as you type.
+**Type:** click the bar icon. The panel opens empty.
 
-**With selected text:** copy it (`SUPER + C`, or the optional keybind
-below), then open the panel. On open it reads the clipboard and
+**Selection:** copy (`SUPER + C` or `SUPER + SHIFT + T`), then the panel
 translates automatically.
 
-- Pick source language (**Detect language** by default) and target
-  (**System language** by default).
-- Swap languages with the swap button.
-- Change the engine in the panel. Preferences persist in `shell.json`.
-- Copy the translation with the copy button. Press Escape to close.
-- Long text scrolls in both boxes (mouse wheel, scrollbar, Page Up/Down).
-- `Ctrl+Shift+C` copies the translation. `Ctrl+Enter` re-runs. `Ctrl+Shift+L` clears.
+**On-screen text (OCR):** `SUPER + SHIFT + PRINT` (optional bind) draws a
+region, reads it with Tesseract, and opens the panel.
 
-Optional keybind — add the contents of
-[`extras/bindings.lua.example`](extras/bindings.lua.example) to
-`~/.config/hypr/bindings.lua`. That copies the current selection, then
-summons the panel (`SUPER + SHIFT + T`).
+**Compact popup:** `SUPER + SHIFT + ALT + T` (optional bind).
+
+In the panel:
+
+- Swap languages **and** text, or pin the current pair.
+- Recent targets appear first (★).
+- Speak original or translation (`espeak-ng`).
+- Paste the translation into the focused app.
+- Toggle auto-copy and clipboard watch (dot on the bar icon when the
+  clipboard looks like another language).
+- History of the last 20 translations.
+- Long text scrolls (wheel, scrollbar, Page Up/Down).
+
+Shortcuts: `Ctrl+Shift+C` copy, `Ctrl+Shift+V` paste-back, `Ctrl+Enter`
+re-run, `Ctrl+Shift+L` clear, Escape close.
+
+Optional keybinds: copy
+[`extras/bindings.lua.example`](extras/bindings.lua.example) into
+`~/.config/hypr/bindings.lua`. Menu rows:
+[`extras/omarchy-menu.jsonc`](extras/omarchy-menu.jsonc).
 
 ```sh
 omarchy-shell shell summon io.github.antunesales-dev.translate '{}'
-omarchy-shell shell hide io.github.antunesales-dev.translate
+omarchy-shell io.github.antunesales-dev.translate-popup open
+omarchy-translate-ocr
 ```
 
 ## Configure
@@ -53,49 +64,66 @@ omarchy-shell shell hide io.github.antunesales-dev.translate
 omarchy bar move io.github.antunesales-dev.translate --section right
 ```
 
-Panel settings persist in `~/.config/omarchy/shell.json`:
-
 | Setting | Default | Meaning |
 |---|---|---|
 | `sourceLang` | `auto` | Detect the source language |
 | `targetLang` | `auto` | System language (`en_US` → `en`) |
+| `pairPinned` | `false` | Keep the current from/to pair |
 | `engine` | `google` | `google`, `mymemory`, or `libretranslate` |
 | `grab` | `clipboard` | `clipboard`, `primary`, or `auto` |
 | `copyResult` | `false` | Copy the translation as soon as it arrives |
-| `libretranslateUrl` | `http://127.0.0.1:5000` | Used when `engine` is `libretranslate` |
-| `libretranslateKey` | empty | Optional API key for hosted LibreTranslate |
+| `watchClipboard` | `false` | Hint on the bar when clipboard language differs |
+| `recentTargets` | `[]` | JSON array of recent target codes |
+| `libretranslateUrl` | `http://127.0.0.1:5000` | LibreTranslate base URL |
+| `libretranslateKey` | empty | Optional API key |
+
+History is stored in `~/.config/omarchy-translate/history.json`.
 
 ## Engines
 
-| Engine | What it is | Key | Sends text off-machine |
-|---|---|---|---|
-| **google** (default) | Unofficial free Google Translate endpoint (`translate.googleapis.com`, `client=gtx`) | No | Yes |
-| **mymemory** | Free Translated.net API. Mix of translation memory and machine translation. About 5,000 characters/day without an email. | No | Yes |
-| **libretranslate** | Open-source [LibreTranslate](https://github.com/LibreTranslate/LibreTranslate) / Argos Translate. Point `libretranslateUrl` at a local instance, or a public one plus `libretranslateKey`. | Optional | Only if the URL is remote |
+If the chosen engine fails, the helper tries the others unless you pass
+`--no-fallback`.
+
+| Engine | What it is | Off-machine |
+|---|---|---|
+| **google** (default) | Unofficial free `translate.googleapis.com` (`client=gtx`) | Yes |
+| **mymemory** | Free Translated.net API, ~5k chars/day | Yes |
+| **libretranslate** | Open-source Argos Translate | Only if the URL is remote |
+
+Local LibreTranslate (Docker):
+
+```sh
+bin/omarchy-translate-setup-lt
+```
+
+Then set Engine to LibreTranslate in the panel.
+
+Lists, blank-line paragraphs, and simple HTML tags are preserved when
+translating.
 
 ## Dependencies
 
-Already on a typical Omarchy install:
+Typical Omarchy already has Python 3.11+, `wl-clipboard`, `grim`,
+`slurp`, `tesseract`, and `wtype`.
 
-- Python 3.11+ (stdlib only; no pip packages)
-- `wl-clipboard` (`wl-copy` / `wl-paste`)
-- Network access, unless you run LibreTranslate locally
+Optional:
 
-The helper is `bin/omarchy-translate`. It is invoked by the panel and also
-works as a CLI:
+- `espeak-ng` — speak original/translation (`omarchy pkg add espeak-ng`)
+- `docker` — local LibreTranslate
+- `tesseract-data-por` (or other `tesseract-data-*`) for extra OCR languages
 
 ```sh
 bin/omarchy-translate --json --text "Olá mundo"
+bin/omarchy-translate detect --json --text "Bonjour"
+bin/omarchy-translate history
 ```
 
 ## Privacy
 
-The plugin runs unsandboxed inside `omarchy-shell`, with your user
-permissions. It does not start a second Quickshell process.
-
-By default, the selected or typed text is sent to Google's translate
-endpoint over HTTPS. Switch the engine to **LibreTranslate** on
-`http://127.0.0.1:5000` to keep translation on your machine.
+Runs unsandboxed inside `omarchy-shell`. Default engine sends text to
+Google over HTTPS. Use local LibreTranslate to keep text on-machine.
+Clipboard watch, when enabled, inspects new clipboard text to detect
+language.
 
 ## Remove
 
@@ -103,7 +131,7 @@ endpoint over HTTPS. Switch the engine to **LibreTranslate** on
 omarchy plugin remove io.github.antunesales-dev.translate
 ```
 
-That removes the plugin. It does not revert a keybind you added yourself.
+That does not revert keybinds you added yourself.
 
 ## License
 

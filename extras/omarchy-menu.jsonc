@@ -1,0 +1,23 @@
+{
+  "personal.translate": {
+    "icon": "󰗊",
+    "label": "Translate",
+    "aliases": ["translate", "translation"],
+    "description": "Translate selected or copied text",
+    "action": "omarchy-shell shell summon io.github.antunesales-dev.translate '{}'"
+  },
+  "personal.translate-ocr": {
+    "icon": "󰴑",
+    "label": "Translate region (OCR)",
+    "aliases": ["ocr translate", "translate screen"],
+    "description": "Select a screen region, read the text, and translate it",
+    "action": "omarchy-translate-ocr"
+  },
+  "personal.translate-popup": {
+    "icon": "󰍉",
+    "label": "Translate popup",
+    "aliases": ["translate overlay"],
+    "description": "Compact translation popup",
+    "action": "omarchy-shell io.github.antunesales-dev.translate-popup open"
+  }
+}

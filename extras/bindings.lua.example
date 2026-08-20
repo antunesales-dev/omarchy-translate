@@ -1,5 +1,7 @@
--- Copy the current selection, then open the Translate panel.
--- Add to ~/.config/hypr/bindings.lua
+-- Optional Translate keybinds. Add to ~/.config/hypr/bindings.lua
+-- Install does not apply these automatically.
+
+local translate_id = "io.github.antunesales-dev.translate"
 
 local function send_shortcut_once(mods, key)
   return function()
@@ -23,6 +25,7 @@ local function active_window_is_terminal()
   return false
 end
 
+-- Copy the selection, then open the full panel.
 o.bind("SUPER + SHIFT + T", "Translate selection", function()
   if active_window_is_terminal() then
     send_shortcut_once("CTRL", "Insert")()
@@ -30,6 +33,12 @@ o.bind("SUPER + SHIFT + T", "Translate selection", function()
     send_shortcut_once("CTRL", "C")()
   end
   hl.timer(function()
-    hl.exec_cmd("omarchy-shell shell summon io.github.antunesales-dev.translate '{}'")
+    hl.exec_cmd("omarchy-shell shell summon " .. translate_id .. " '{}'")
   end, { timeout = 180, type = "oneshot" })
 end)
+
+-- Draw a region, OCR it, then translate.
+o.bind("SUPER + SHIFT + PRINT", "Translate region (OCR)", "omarchy-translate-ocr")
+
+-- Compact popup near the cursor.
+o.bind("SUPER + SHIFT + ALT + T", "Translate popup", "omarchy-shell io.github.antunesales-dev.translate-popup open")

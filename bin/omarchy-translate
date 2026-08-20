@@ -7,11 +7,13 @@ import argparse
 import json
 import locale
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import tomllib
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -29,6 +31,41 @@ USER_AGENT = (
 
 ENGINES = ("google", "mymemory", "libretranslate")
 GRAB_MODES = ("clipboard", "primary", "auto")
+HISTORY_PATH = CONFIG_DIR / "history.json"
+HISTORY_MAX = 20
+HTML_RE = re.compile(r"</?[a-zA-Z][^>]*>")
+LIST_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+SPEAK_VOICES = {
+    "en": "en",
+    "pt": "pt",
+    "es": "es",
+    "fr": "fr",
+    "de": "de",
+    "it": "it",
+    "nl": "nl",
+    "pl": "pl",
+    "ru": "ru",
+    "uk": "uk",
+    "tr": "tr",
+    "ar": "ar",
+    "hi": "hi",
+    "cs": "cs",
+    "el": "el",
+    "sv": "sv",
+    "da": "da",
+    "fi": "fi",
+    "no": "no",
+    "ro": "ro",
+    "hu": "hu",
+    "ca": "ca",
+    "id": "id",
+    "vi": "vi",
+    "ja": "ja",
+    "ko": "ko",
+    "zh": "zh",
+    "zh-CN": "zh",
+    "zh-TW": "zh",
+}
 
 LANGUAGES: list[tuple[str, str]] = [
     ("auto", "Detect language"),
@@ -97,6 +134,7 @@ class Config:
     engine: str = "google"
     grab: str = "clipboard"
     copy_result: bool = False
+    fallback: bool = True
     libretranslate_url: str = "http://127.0.0.1:5000"
     libretranslate_api_key: str = ""
 
@@ -301,7 +339,9 @@ def translate_mymemory(text: str, source: str, target: str) -> Translation:
     )
 
 
-def translate_libretranslate(cfg: Config, text: str, source: str, target: str) -> Translation:
+def translate_libretranslate(
+    cfg: Config, text: str, source: str, target: str, *, html: bool = False
+) -> Translation:
     base = (cfg.libretranslate_url or "").rstrip("/")
     if not base:
         raise RuntimeError("Set libretranslate_url in preferences first")
@@ -309,7 +349,7 @@ def translate_libretranslate(cfg: Config, text: str, source: str, target: str) -
         "q": text,
         "source": "auto" if source == "auto" else source,
         "target": target,
-        "format": "text",
+        "format": "html" if html else "text",
     }
     if cfg.libretranslate_api_key:
         body["api_key"] = cfg.libretranslate_api_key
@@ -337,6 +377,125 @@ def translate_libretranslate(cfg: Config, text: str, source: str, target: str) -
     )
 
 
+def looks_like_html(text: str) -> bool:
+    return text.count("<") >= 2 and bool(HTML_RE.search(text))
+
+
+def is_list_text(text: str) -> bool:
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(lines) < 3:
+        return False
+    hits = sum(1 for ln in lines if LIST_RE.match(ln))
+    return hits >= max(2, len(lines) // 2)
+
+
+def history_list() -> list:
+    if not HISTORY_PATH.is_file():
+        return []
+    try:
+        data = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def history_add(source: str, result: Translation) -> None:
+    entry = {
+        "source": source[:2000],
+        "text": result.text[:2000],
+        "src": result.detected or result.source,
+        "target": result.target,
+        "engine": result.engine,
+        "ts": int(time.time()),
+    }
+    items = [entry] + [item for item in history_list() if item.get("source") != entry["source"]]
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    HISTORY_PATH.write_text(json.dumps(items[:HISTORY_MAX], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def history_clear() -> None:
+    if HISTORY_PATH.is_file():
+        HISTORY_PATH.unlink()
+
+
+def translate_with_engine(cfg: Config, engine: str, text: str, source: str, target: str, *, html: bool = False) -> Translation:
+    if engine == "mymemory":
+        return translate_mymemory(text, source, target)
+    if engine == "libretranslate":
+        return translate_libretranslate(cfg, text, source, target, html=html)
+    return translate_google(text, source, target)
+
+
+def translate_chunks(cfg: Config, engine: str, text: str, source: str, target: str) -> Translation:
+    parts = re.split(r"(\n\s*\n)" if "\n\n" in text or not is_list_text(text) else r"(\n)", text)
+    if is_list_text(text) and "\n\n" not in text:
+        parts = re.split(r"(\n)", text)
+    pieces: list[str] = []
+    detected = ""
+    for part in parts:
+        if part == "" or part.isspace() or part.startswith("\n"):
+            pieces.append(part)
+            continue
+        lead = part[: len(part) - len(part.lstrip())]
+        trail = part[len(part.rstrip()) :]
+        body = part.strip()
+        if not body:
+            pieces.append(part)
+            continue
+        unit = translate_with_engine(cfg, engine, body, source, target)
+        if unit.detected:
+            detected = unit.detected
+        pieces.append(f"{lead}{unit.text}{trail}")
+    return Translation(
+        text="".join(pieces),
+        source=source,
+        target=target,
+        engine=engine,
+        detected=detected,
+    )
+
+
+def translate_html(cfg: Config, engine: str, text: str, source: str, target: str) -> Translation:
+    if engine == "libretranslate":
+        return translate_with_engine(cfg, engine, text, source, target, html=True)
+    parts = re.split(r"(<[^>]+>)", text)
+    pieces: list[str] = []
+    detected = ""
+    for part in parts:
+        if part.startswith("<") and part.endswith(">"):
+            pieces.append(part)
+            continue
+        if not part.strip():
+            pieces.append(part)
+            continue
+        unit = translate_with_engine(cfg, engine, part, source, target)
+        if unit.detected:
+            detected = unit.detected
+        pieces.append(unit.text)
+    return Translation(text="".join(pieces), source=source, target=target, engine=engine, detected=detected)
+
+
+def translate_preserving(cfg: Config, engine: str, text: str, source: str, target: str) -> Translation:
+    if looks_like_html(text):
+        return translate_html(cfg, engine, text, source, target)
+    if "\n\n" in text or is_list_text(text):
+        return translate_chunks(cfg, engine, text, source, target)
+    result = translate_with_engine(cfg, engine, text, source, target)
+    if text.count("\n") > 0 and result.text.count("\n") == 0:
+        return translate_chunks(cfg, engine, text, source, target)
+    return result
+
+
+def engine_order(cfg: Config) -> list[str]:
+    order = [cfg.engine]
+    if not cfg.fallback:
+        return order
+    for engine in ENGINES:
+        if engine not in order:
+            order.append(engine)
+    return order
+
+
 def translate_text(cfg: Config, text: str, source: str | None = None, target: str | None = None) -> Translation:
     cleaned = text.strip()
     if not cleaned:
@@ -344,12 +503,44 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
     src = cfg.resolved_source() if source is None else source
     dst = cfg.resolved_target() if target is None else target
     if src != "auto" and src == dst:
-        return Translation(text=cleaned, source=src, target=dst, engine=cfg.engine, detected=src)
-    if cfg.engine == "mymemory":
-        return translate_mymemory(cleaned, src, dst)
-    if cfg.engine == "libretranslate":
-        return translate_libretranslate(cfg, cleaned, src, dst)
-    return translate_google(cleaned, src, dst)
+        result = Translation(text=cleaned, source=src, target=dst, engine=cfg.engine, detected=src)
+        history_add(cleaned, result)
+        return result
+    last_error: Exception | None = None
+    for engine in engine_order(cfg):
+        try:
+            result = translate_preserving(cfg, engine, cleaned, src, dst)
+            history_add(cleaned, result)
+            return result
+        except Exception as exc:  # noqa: BLE001 — try the next engine
+            last_error = exc
+            continue
+    raise RuntimeError(str(last_error) if last_error else "Translation failed")
+
+
+def detect_language(cfg: Config, text: str) -> str:
+    snippet = text.strip()[:500]
+    if not snippet:
+        return ""
+    try:
+        result = translate_google(snippet, "auto", cfg.resolved_target())
+        return result.detected
+    except RuntimeError:
+        try:
+            result = translate_mymemory(snippet, "auto", cfg.resolved_target())
+            return result.detected
+        except RuntimeError:
+            return ""
+
+
+def speak_text(text: str, lang: str) -> None:
+    if not have("espeak-ng") and not have("espeak"):
+        raise RuntimeError("Install espeak-ng to hear translations")
+    bin_name = "espeak-ng" if have("espeak-ng") else "espeak"
+    voice = SPEAK_VOICES.get(normalize_lang(lang), SPEAK_VOICES.get(normalize_lang(lang).split("-")[0], "en"))
+    result = run([bin_name, "-v", voice, "--", text[:1500]])
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "Speech failed")
 
 
 def have(cmd: str) -> bool:
@@ -775,7 +966,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         prog=APP_NAME,
         description="Translate selected or copied text in an Omarchy TUI.",
     )
-    parser.add_argument("command", nargs="?", choices=("prefs", "init"), help="prefs opens settings; init writes the default config")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("prefs", "init", "history", "detect", "speak", "setup-lt"),
+        help="prefs, init, history, detect, speak, or setup-lt",
+    )
     parser.add_argument("--text", help="Translate this text instead of the clipboard")
     parser.add_argument("--file", help="Read text to translate from a file")
     parser.add_argument("--stdin", action="store_true", help="Read text to translate from stdin")
@@ -787,7 +983,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--libretranslate-key", help="LibreTranslate API key")
     parser.add_argument("--json", action="store_true", help="Print a JSON result and exit")
     parser.add_argument("--copy", action="store_true", help="Copy the translation to the clipboard")
+    parser.add_argument("--no-fallback", action="store_true", help="Do not try other engines if the first fails")
     parser.add_argument("--print-target", action="store_true", help="Print the resolved target language and exit")
+    parser.add_argument("--history-clear", action="store_true", help="Clear saved translation history")
     return parser.parse_args(argv)
 
 
@@ -812,6 +1010,8 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         cfg.grab = args.grab
     if args.copy:
         cfg.copy_result = True
+    if args.no_fallback:
+        cfg.fallback = False
     if args.libretranslate_url:
         cfg.libretranslate_url = args.libretranslate_url
     if args.libretranslate_key is not None and args.libretranslate_key != "":
@@ -831,6 +1031,30 @@ def main(argv: list[str] | None = None) -> int:
         save_config(cfg)
         print(CONFIG_PATH)
         return 0
+
+    if args.command == "history" or args.history_clear:
+        if args.history_clear:
+            history_clear()
+        print(json.dumps(history_list(), ensure_ascii=False))
+        return 0
+
+    if args.command == "detect":
+        detected = detect_language(cfg, read_input_text(args, cfg))
+        if args.json:
+            print(json.dumps({"detected": detected, "system": cfg.resolved_target()}, ensure_ascii=False))
+        else:
+            print(detected)
+        return 0
+
+    if args.command == "speak":
+        speak_text(read_input_text(args, cfg), args.source or cfg.resolved_target())
+        return 0
+
+    if args.command == "setup-lt":
+        script = Path(__file__).resolve().parent / "omarchy-translate-setup-lt"
+        if not script.is_file():
+            fail("setup script missing: " + str(script))
+        raise SystemExit(subprocess.call([str(script)]))
 
     if args.command == "prefs":
         if not tty():

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Paste the current clipboard into the focused window (Ctrl+V, or Shift+Insert in terminals).
+set -euo pipefail
+
+sleep 0.18
+class=$(hyprctl activewindow -j 2>/dev/null | jq -r '.class // empty')
+case "$class" in
+Alacritty | kitty | com.mitchellh.ghostty | foot | org.codeberg.dnkl.foot | wezterm | org.omarchy.* | TUI.*)
+  wtype -M shift -k Insert -m shift
+  ;;
+*)
+  wtype -M ctrl v -m ctrl
+  ;;
+esac

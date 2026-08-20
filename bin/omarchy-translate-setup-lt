@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Start a local LibreTranslate container (open-source engine, no Google).
+set -euo pipefail
+
+NAME="omarchy-libretranslate"
+IMAGE="libretranslate/libretranslate:latest"
+
+if ! command -v docker >/dev/null; then
+  echo "Docker is not installed. Install it with: omarchy install docker" >&2
+  exit 1
+fi
+
+if docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
+  echo "LibreTranslate is already running at http://127.0.0.1:5000"
+  exit 0
+fi
+
+if docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then
+  docker start "$NAME" >/dev/null
+  echo "Started existing container $NAME on http://127.0.0.1:5000"
+  exit 0
+fi
+
+echo "Pulling $IMAGE (first run downloads language models; this can take a while)…"
+docker run -d --name "$NAME" -p 5000:5000 --restart unless-stopped "$IMAGE" >/dev/null
+echo "LibreTranslate is starting at http://127.0.0.1:5000"
+echo "In the Translate panel, set Engine to LibreTranslate (URL defaults to that address)."

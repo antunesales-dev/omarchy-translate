@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Capture a screen region with OCR, then open Translate.
+set -euo pipefail
+
+PLUGIN_ID="io.github.antunesales-dev.translate"
+CLIP="/tmp/omarchy-translate-clip.txt"
+
+cleanup_freeze() {
+  [[ -n ${PID:-} ]] && kill "$PID" 2>/dev/null || true
+}
+trap cleanup_freeze EXIT
+
+hyprpicker -r -z >/dev/null 2>&1 &
+PID=$!
+sleep .1
+SELECTION=$(slurp 2>/dev/null) || exit 0
+[[ -z $SELECTION ]] && exit 0
+
+OCR_LANGS="${OMARCHY_OCR_LANGS:-eng}"
+if [[ -z ${OMARCHY_OCR_LANGS:-} ]] && tesseract --list-langs 2>/dev/null | grep -qx por; then
+  OCR_LANGS="eng+por"
+fi
+TEXT=$(grim -g "$SELECTION" - | tesseract stdin stdout --oem 1 --psm 6 -l "$OCR_LANGS" --dpi 300 -c preserve_interword_spaces=1 2>/dev/null) || exit 1
+TEXT=$(printf '%s' "$TEXT" | sed 's/[[:space:]]*$//')
+[[ -z $TEXT ]] && {
+  omarchy-notification-send -g 󰗊 "No text found in that region"
+  exit 1
+}
+
+printf '%s' "$TEXT" | wl-copy
+printf '%s' "$TEXT" >"$CLIP"
+omarchy-notification-send -g 󰗊 "OCR text copied — translating"
+omarchy-shell shell summon "$PLUGIN_ID" '{}'
