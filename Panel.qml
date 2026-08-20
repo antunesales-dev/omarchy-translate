@@ -547,7 +547,7 @@ Panel {
           Button {
             id: pinButton
             width: Style.space(34)
-            iconText: root.pairPinned ? "󰐃" : "󰐄"
+            iconText: root.pairPinned ? "󰐃" : "󰤱"
             iconSize: Style.font.title
             tooltipText: root.pairPinned ? "Unpin language pair" : "Pin this language pair"
             foreground: root.pairPinned ? root.accent : root.fg
@@ -608,29 +608,7 @@ Panel {
 
           Button {
             width: Style.space(28)
-            iconText: "󰗮"
-            iconSize: Style.font.body
-            tooltipText: "Speak original"
-            foreground: root.fg
-            fontFamily: root.fontFamily
-            enabled: sourceBox.text !== ""
-            opacity: enabled ? 1 : 0.4
-            onClicked: root.speak("source")
-          }
-          Button {
-            width: Style.space(28)
-            iconText: "󰗯"
-            iconSize: Style.font.body
-            tooltipText: "Speak translation"
-            foreground: root.fg
-            fontFamily: root.fontFamily
-            enabled: root.resultText !== ""
-            opacity: enabled ? 1 : 0.4
-            onClicked: root.speak("result")
-          }
-          Button {
-            width: Style.space(28)
-            iconText: "󰕒"
+            iconText: "󰆒"
             iconSize: Style.font.body
             tooltipText: "Paste translation into the focused app"
             foreground: root.fg
@@ -641,7 +619,7 @@ Panel {
           }
           Button {
             width: Style.space(28)
-            iconText: root.copyResult ? "󰅒" : "󰅑"
+            iconText: "󰆏"
             iconSize: Style.font.body
             tooltipText: root.copyResult ? "Auto-copy on" : "Auto-copy off"
             foreground: root.copyResult ? root.accent : root.fg
@@ -653,7 +631,7 @@ Panel {
           }
           Button {
             width: Style.space(28)
-            iconText: root.watchClipboard ? "󰕥" : "󰕦"
+            iconText: root.watchClipboard ? "󰈈" : "󰈉"
             iconSize: Style.font.body
             tooltipText: root.watchClipboard ? "Clipboard watch on" : "Clipboard watch off"
             foreground: root.watchClipboard ? root.accent : root.fg
@@ -674,12 +652,34 @@ Panel {
           }
         }
 
-        Text {
+        Item {
           width: parent.width
-          text: "Original"
-          color: Qt.darker(root.fg, 1.4)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
+          height: Math.max(origLabel.implicitHeight, speakSource.implicitHeight)
+
+          Text {
+            id: origLabel
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Original"
+            color: Qt.darker(root.fg, 1.4)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Button {
+            id: speakSource
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(28)
+            iconText: "󰕾"
+            iconSize: Style.font.body
+            tooltipText: "Speak original"
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            enabled: sourceBox.text !== ""
+            opacity: enabled ? 1 : 0.4
+            onClicked: root.speak("source")
+          }
         }
 
         ScrollField {
@@ -691,12 +691,34 @@ Panel {
           }
         }
 
-        Text {
+        Item {
           width: parent.width
-          text: "Translation"
-          color: Qt.darker(root.fg, 1.4)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
+          height: Math.max(transLabel.implicitHeight, speakResult.implicitHeight)
+
+          Text {
+            id: transLabel
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Translation"
+            color: Qt.darker(root.fg, 1.4)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Button {
+            id: speakResult
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(28)
+            iconText: "󰕾"
+            iconSize: Style.font.body
+            tooltipText: "Speak translation"
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            enabled: root.resultText !== ""
+            opacity: enabled ? 1 : 0.4
+            onClicked: root.speak("result")
+          }
         }
 
         ScrollField {
