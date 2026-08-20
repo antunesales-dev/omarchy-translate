@@ -81,6 +81,24 @@ Panel {
   property bool copied: false
   property bool ingesting: false
   property bool triedPrimary: false
+  property bool translateQueued: false
+
+  readonly property int boxHeight: Style.space(200)
+  readonly property int scrollGutter: 12
+  readonly property string clipPath: "/tmp/omarchy-translate-clip.txt"
+  readonly property string inPath: "/tmp/omarchy-translate-in.txt"
+  readonly property string outPath: "/tmp/omarchy-translate-out.json"
+  readonly property string helperPath: {
+    var url = Qt.resolvedUrl(".").toString()
+    if (url.indexOf("file://") === 0) url = url.substring(7)
+    if (url.length > 1 && url.charAt(url.length - 1) === "/") url = url.substring(0, url.length - 1)
+    return decodeURIComponent(url) + "/bin/omarchy-translate"
+  }
+  readonly property color fg: bar ? bar.foreground : Color.foreground
+  readonly property color accent: Color.accent
+  readonly property color selectionTint: Style.selectionFillFor(fg, accent)
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property int charCount: String(sourceBox.text || "").length
 
   onSettingsChanged: {
     sourceLang = root.setting("sourceLang", "auto")
@@ -99,25 +117,11 @@ Panel {
     var entry = { id: root.moduleName }
     for (var existing in root.settings) if (existing !== "id") entry[existing] = root.settings[existing]
     for (var key in values) entry[key] = values[key]
-
     root.settings = entry
     if (root.hostWidget && "settings" in root.hostWidget) root.hostWidget.settings = entry
     if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
-
-  readonly property string pluginDir: {
-    var url = Qt.resolvedUrl(".").toString()
-    if (url.indexOf("file://") === 0) url = url.substring(7)
-    if (url.length > 1 && url.charAt(url.length - 1) === "/") url = url.substring(0, url.length - 1)
-    return decodeURIComponent(url)
-  }
-
-  readonly property string helperPath: root.pluginDir + "/bin/omarchy-translate"
-  readonly property color fg: bar ? bar.foreground : Color.foreground
-  readonly property color accent: Color.accent
-  readonly property color selectionTint: Style.selectionFillFor(fg, accent)
-  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   function open() {
     root.controller.show()
@@ -139,16 +143,15 @@ Panel {
     return false
   }
 
-  readonly property string clipPath: "/tmp/omarchy-translate-clip.txt"
-  readonly property string inPath: "/tmp/omarchy-translate-in.txt"
+  function pasteCommand(primary) {
+    var flag = primary ? " --primary" : ""
+    return ["bash", "-c", "wl-paste --no-newline" + flag + " > " + root.clipPath]
+  }
 
   function ingestSelection() {
     root.ingesting = true
     root.triedPrimary = false
-    if (root.grab === "primary" || root.grab === "auto")
-      paste.command = ["bash", "-c", "wl-paste --no-newline --primary > " + root.clipPath]
-    else
-      paste.command = ["bash", "-c", "wl-paste --no-newline > " + root.clipPath]
+    paste.command = root.pasteCommand(root.grab === "primary" || root.grab === "auto")
     paste.running = true
   }
 
@@ -156,17 +159,18 @@ Panel {
     var text = String(raw || "").replace(/\s+$/, "")
     if (!text && root.grab === "auto" && !root.triedPrimary) {
       root.triedPrimary = true
-      paste.command = ["wl-paste", "--no-newline"]
+      paste.command = root.pasteCommand(false)
       paste.running = true
       return
     }
     root.ingesting = false
     if (!text) {
-      sourceEdit.forceActiveFocus()
+      sourceBox.editor.forceActiveFocus()
       return
     }
-    if (sourceEdit.text === text && root.resultText !== "") return
-    sourceEdit.text = text
+    if (sourceBox.text === text && root.resultText !== "") return
+    sourceBox.text = text
+    sourceBox.resetScroll()
     root.translate()
   }
 
@@ -178,16 +182,19 @@ Panel {
       src = root.detectedSrc
     }
     if (dst === "auto") return
+    var incoming = root.resultText
     root.sourceLang = dst
     root.targetLang = src
     sourceDropdown.value = dst
     targetDropdown.value = src
     root.detectedSrc = ""
     root.persistSettings({ sourceLang: dst, targetLang: src })
+    if (incoming && incoming.length) {
+      sourceBox.text = incoming
+      sourceBox.resetScroll()
+    }
     debounce.restart()
   }
-
-  readonly property string outPath: "/tmp/omarchy-translate-out.json"
 
   function helperCommand() {
     var cmd = [
@@ -210,7 +217,7 @@ Panel {
   }
 
   function translate() {
-    var text = sourceEdit.text
+    var text = sourceBox.text
     if (!text || !String(text).trim()) {
       resultText = ""
       detectedSrc = ""
@@ -220,21 +227,27 @@ Panel {
     }
     busy = true
     errorText = ""
+    root.translateQueued = true
     sourceFile.setText(String(text).trim() + "\n")
-    Qt.callLater(function() {
-      translator.command = root.helperCommand()
-      translator.running = true
-    })
+    helperFallback.restart()
+  }
+
+  function startHelper() {
+    if (!root.translateQueued) return
+    root.translateQueued = false
+    translator.command = root.helperCommand()
+    translator.running = true
   }
 
   function onTranslation(raw) {
     busy = false
-    if (!sourceEdit.text) return
+    if (!sourceBox.text) return
     try {
       var payload = JSON.parse(raw)
       resultText = payload.text || ""
       if (root.sourceLang === "auto") detectedSrc = payload.src || payload.detected || ""
       errorText = ""
+      resultBox.resetScroll()
       if (root.copyResult) root.copyResultToClipboard()
     } catch (e) {
       errorText = "Could not read the translation"
@@ -249,11 +262,128 @@ Panel {
   }
 
   function clearAll() {
-    sourceEdit.text = ""
+    sourceBox.text = ""
     resultText = ""
     detectedSrc = ""
     errorText = ""
+    sourceBox.resetScroll()
+    resultBox.resetScroll()
     debounce.stop()
+    sourceBox.editor.forceActiveFocus()
+  }
+
+  component ScrollField: Item {
+    id: field
+    property alias text: editor.text
+    property alias readOnly: editor.readOnly
+    property alias editor: editor
+    property string placeholder: ""
+    property bool activeLooks: editor.activeFocus
+
+    function resetScroll() {
+      flick.contentY = 0
+    }
+
+    function scrollBy(dy) {
+      var maxY = Math.max(0, flick.contentHeight - flick.height)
+      flick.contentY = Math.max(0, Math.min(maxY, flick.contentY + dy))
+    }
+
+    width: parent.width
+    height: root.boxHeight
+
+    HoverHandler {
+      id: hover
+    }
+
+    BorderSurface {
+      anchors.fill: parent
+      color: Style.controlFill(editor.activeFocus, hover.hovered, root.fg, root.accent)
+      borderSpec: editor._borderSpec
+      radius: Style.cornerRadius
+    }
+
+    Flickable {
+      id: flick
+      anchors.fill: parent
+      clip: true
+      boundsBehavior: Flickable.StopAtBounds
+      flickableDirection: Flickable.VerticalFlick
+      contentWidth: width
+      contentHeight: Math.max(height, editor.contentHeight + editor.topPadding + editor.bottomPadding)
+      interactive: contentHeight > height
+
+      WheelHandler {
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: function(event) {
+          var dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 8
+          field.scrollBy(-dy)
+          event.accepted = true
+        }
+      }
+
+      TextEdit {
+        id: editor
+        width: Math.max(1, flick.width - root.scrollGutter)
+        height: contentHeight + topPadding + bottomPadding
+        color: root.fg
+        selectionColor: root.selectionTint
+        selectedTextColor: root.fg
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        wrapMode: TextEdit.Wrap
+        selectByMouse: true
+        persistentSelection: true
+        leftPadding: Style.spacing.controlPaddingX + Border.left(_borderSpec)
+        rightPadding: Style.spacing.controlPaddingX + Border.right(_borderSpec)
+        topPadding: Style.spacing.controlPaddingY + Border.top(_borderSpec)
+        bottomPadding: Style.spacing.controlPaddingY + Border.bottom(_borderSpec)
+
+        readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : (hover.hovered ? "hover-cursor" : "normal"), root.fg, root.accent)
+
+        Keys.onPressed: function(event) {
+          if (event.key === Qt.Key_PageDown) {
+            field.scrollBy(flick.height * 0.85)
+            event.accepted = true
+          } else if (event.key === Qt.Key_PageUp) {
+            field.scrollBy(-flick.height * 0.85)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Home && (event.modifiers & Qt.ControlModifier)) {
+            flick.contentY = 0
+            event.accepted = true
+          } else if (event.key === Qt.Key_End && (event.modifiers & Qt.ControlModifier)) {
+            field.scrollBy(flick.contentHeight)
+            event.accepted = true
+          }
+        }
+      }
+
+      Text {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.right: parent.right
+        leftPadding: editor.leftPadding
+        rightPadding: editor.rightPadding
+        topPadding: editor.topPadding
+        text: field.placeholder
+        color: Qt.darker(root.fg, 1.6)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        wrapMode: Text.WordWrap
+        visible: editor.text.length === 0
+      }
+
+      ScrollBar.vertical: ScrollBar {
+        policy: flick.contentHeight > flick.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+        implicitWidth: 8
+        contentItem: Rectangle {
+          implicitWidth: 6
+          radius: 3
+          color: root.accent
+          opacity: 0.7
+        }
+      }
+    }
   }
 
   KeyboardPanel {
@@ -262,9 +392,9 @@ Panel {
     owner: root.hostWidget || root
     bar: root.bar
     open: root.opened
-    focusTarget: sourceEdit
-    contentWidth: panel.fittedContentWidth(Style.space(440))
-    contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight, Style.space(620))
+    focusTarget: sourceBox.editor
+    contentWidth: panel.fittedContentWidth(Style.space(500))
+    contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight, Style.space(760))
 
     Item {
       anchors.fill: parent
@@ -272,6 +402,21 @@ Panel {
       Keys.onPressed: function(event) {
         if (event.key === Qt.Key_Tab) {
           root.switchPanel(event.modifiers & Qt.ShiftModifier ? -1 : 1)
+          event.accepted = true
+          return
+        }
+        if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier)) {
+          root.copyResultToClipboard()
+          event.accepted = true
+          return
+        }
+        if (event.key === Qt.Key_Return && (event.modifiers & Qt.ControlModifier)) {
+          root.translate()
+          event.accepted = true
+          return
+        }
+        if (event.key === Qt.Key_L && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier)) {
+          root.clearAll()
           event.accepted = true
         }
       }
@@ -299,7 +444,7 @@ Panel {
               root.sourceLang = value
               root.detectedSrc = ""
               root.persistSettings({ sourceLang: value })
-              if (value !== "auto") sourceEdit.forceActiveFocus()
+              if (value !== "auto") sourceBox.editor.forceActiveFocus()
               debounce.restart()
             }
           }
@@ -309,7 +454,7 @@ Panel {
             width: Style.space(34)
             iconText: "󰓡"
             iconSize: Style.font.title
-            tooltipText: "Swap languages"
+            tooltipText: "Swap languages and text"
             foreground: root.fg
             fontFamily: root.fontFamily
             anchors.bottom: parent.bottom
@@ -347,173 +492,47 @@ Panel {
           }
         }
 
-        Item {
+        TextField {
           width: parent.width
-          height: Style.space(120)
+          visible: root.engine === "libretranslate"
+          height: visible ? implicitHeight : 0
+          text: root.libretranslateUrl
+          placeholderText: "LibreTranslate URL"
+          foreground: root.fg
+          font.family: root.fontFamily
+          onEditingFinished: root.persistSettings({ libretranslateUrl: text })
+        }
 
-          HoverHandler {
-            id: sourceHover
-          }
+        Text {
+          width: parent.width
+          text: "Original"
+          color: Qt.darker(root.fg, 1.4)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
 
-          BorderSurface {
-            anchors.fill: parent
-            color: Style.controlFill(sourceEdit.activeFocus, sourceHover.hovered, root.fg, root.accent)
-            borderSpec: sourceEdit._borderSpec
-            radius: Style.cornerRadius
-          }
-
-          Flickable {
-            id: sourceScroll
-            anchors.fill: parent
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            flickableDirection: Flickable.VerticalFlick
-            contentWidth: width
-            contentHeight: Math.max(height, sourceEdit.contentHeight + sourceEdit.topPadding + sourceEdit.bottomPadding)
-            interactive: contentHeight > height
-
-            WheelHandler {
-              acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-              onWheel: function(event) {
-                var dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 8
-                var maxY = Math.max(0, sourceScroll.contentHeight - sourceScroll.height)
-                sourceScroll.contentY = Math.max(0, Math.min(maxY, sourceScroll.contentY - dy))
-                event.accepted = true
-              }
-            }
-
-            TextEdit {
-              id: sourceEdit
-              width: sourceScroll.width
-              height: contentHeight + topPadding + bottomPadding
-              color: root.fg
-              selectionColor: root.selectionTint
-              selectedTextColor: root.fg
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              wrapMode: TextEdit.Wrap
-              selectByMouse: true
-              persistentSelection: true
-              leftPadding: Style.spacing.controlPaddingX + Border.left(_borderSpec)
-              rightPadding: Style.spacing.controlPaddingX + Border.right(_borderSpec)
-              topPadding: Style.spacing.controlPaddingY + Border.top(_borderSpec)
-              bottomPadding: Style.spacing.controlPaddingY + Border.bottom(_borderSpec)
-
-              readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : (sourceHover.hovered ? "hover-cursor" : "normal"), root.fg, root.accent)
-
-              onTextChanged: {
-                root.sourceText = text
-                if (!root.ingesting) debounce.restart()
-              }
-            }
-
-            Text {
-              anchors.left: parent.left
-              anchors.top: parent.top
-              anchors.right: parent.right
-              leftPadding: sourceEdit.leftPadding
-              rightPadding: sourceEdit.rightPadding
-              topPadding: sourceEdit.topPadding
-              text: "Select text and press the keybind, or type here…"
-              color: Qt.darker(root.fg, 1.6)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              wrapMode: Text.WordWrap
-              visible: sourceEdit.text.length === 0
-            }
-
-            ScrollBar.vertical: ScrollBar {
-              policy: sourceScroll.contentHeight > sourceScroll.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
-              implicitWidth: 8
-              contentItem: Rectangle {
-                implicitWidth: 6
-                radius: 3
-                color: root.accent
-                opacity: 0.7
-              }
-            }
+        ScrollField {
+          id: sourceBox
+          placeholder: "Select text and press the keybind, or type here…"
+          onTextChanged: {
+            root.sourceText = text
+            if (!root.ingesting) debounce.restart()
           }
         }
 
-        Item {
+        Text {
           width: parent.width
-          height: Style.space(120)
+          text: "Translation"
+          color: Qt.darker(root.fg, 1.4)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
 
-          BorderSurface {
-            anchors.fill: parent
-            color: Style.controlFill(false, false, root.fg, root.accent)
-            borderSpec: resultEdit._borderSpec
-            radius: Style.cornerRadius
-          }
-
-          Flickable {
-            id: resultScroll
-            anchors.fill: parent
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            flickableDirection: Flickable.VerticalFlick
-            contentWidth: width
-            contentHeight: Math.max(height, resultEdit.contentHeight + resultEdit.topPadding + resultEdit.bottomPadding)
-            interactive: contentHeight > height
-
-            WheelHandler {
-              acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-              onWheel: function(event) {
-                var dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 8
-                var maxY = Math.max(0, resultScroll.contentHeight - resultScroll.height)
-                resultScroll.contentY = Math.max(0, Math.min(maxY, resultScroll.contentY - dy))
-                event.accepted = true
-              }
-            }
-
-            TextEdit {
-              id: resultEdit
-              width: resultScroll.width
-              height: contentHeight + topPadding + bottomPadding
-              readOnly: true
-              text: root.resultText
-              color: root.fg
-              selectionColor: root.selectionTint
-              selectedTextColor: root.fg
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              wrapMode: TextEdit.Wrap
-              selectByMouse: true
-              persistentSelection: true
-              leftPadding: Style.spacing.controlPaddingX + Border.left(_borderSpec)
-              rightPadding: Style.spacing.controlPaddingX + Border.right(_borderSpec)
-              topPadding: Style.spacing.controlPaddingY + Border.top(_borderSpec)
-              bottomPadding: Style.spacing.controlPaddingY + Border.bottom(_borderSpec)
-
-              readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : "normal", root.fg, root.accent)
-            }
-
-            Text {
-              anchors.left: parent.left
-              anchors.top: parent.top
-              anchors.right: parent.right
-              leftPadding: resultEdit.leftPadding
-              rightPadding: resultEdit.rightPadding
-              topPadding: resultEdit.topPadding
-              text: root.errorText !== "" ? root.errorText : "Translation…"
-              color: Qt.darker(root.fg, 1.6)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              wrapMode: Text.WordWrap
-              visible: resultEdit.text.length === 0
-            }
-
-            ScrollBar.vertical: ScrollBar {
-              policy: resultScroll.contentHeight > resultScroll.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
-              implicitWidth: 8
-              contentItem: Rectangle {
-                implicitWidth: 6
-                radius: 3
-                color: root.accent
-                opacity: 0.7
-              }
-            }
-          }
+        ScrollField {
+          id: resultBox
+          readOnly: true
+          text: root.resultText
+          placeholder: root.errorText !== "" ? root.errorText : "Translation…"
         }
 
         Item {
@@ -528,22 +547,25 @@ Panel {
             width: Style.space(28)
             iconText: "󰆴"
             iconSize: Style.font.body
-            tooltipText: "Clear text"
+            tooltipText: "Clear (Ctrl+Shift+L)"
             foreground: root.fg
             fontFamily: root.fontFamily
-            enabled: (sourceEdit.text !== "" || resultEdit.text !== "") && !root.busy
+            enabled: (sourceBox.text !== "" || resultBox.text !== "") && !root.busy
             opacity: enabled ? 1 : 0.4
             onClicked: root.clearAll()
           }
 
           Text {
             anchors.left: clearButton.right
-            anchors.leftMargin: Style.space(6)
+            anchors.leftMargin: Style.space(8)
+            anchors.right: copyButton.left
+            anchors.rightMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
-            text: root.busy ? "Translating…" : ""
-            color: root.accent
+            text: root.busy ? "Translating…" : (root.charCount > 0 ? (root.charCount + " chars") : "")
+            color: root.busy ? root.accent : Qt.darker(root.fg, 1.5)
             font.family: root.fontFamily
-            font.pixelSize: Style.font.body
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
           }
 
           Button {
@@ -553,7 +575,7 @@ Panel {
             width: Style.space(28)
             iconText: root.copied ? "󰄬" : "󰆏"
             iconSize: Style.font.body
-            tooltipText: root.copied ? "Copied!" : "Copy translation"
+            tooltipText: root.copied ? "Copied!" : "Copy translation (Ctrl+Shift+C)"
             foreground: root.copied ? root.accent : root.fg
             fontFamily: root.fontFamily
             enabled: root.resultText !== "" && !root.busy
@@ -569,6 +591,12 @@ Panel {
     id: debounce
     interval: 600
     onTriggered: root.translate()
+  }
+
+  Timer {
+    id: helperFallback
+    interval: 150
+    onTriggered: root.startHelper()
   }
 
   Timer {
@@ -592,6 +620,7 @@ Panel {
     id: sourceFile
     path: root.inPath
     printErrors: false
+    onSaved: root.startHelper()
   }
 
   Process {

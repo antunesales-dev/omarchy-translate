@@ -34,6 +34,8 @@ translates automatically.
 - Swap languages with the swap button.
 - Change the engine in the panel. Preferences persist in `shell.json`.
 - Copy the translation with the copy button. Press Escape to close.
+- Long text scrolls in both boxes (mouse wheel, scrollbar, Page Up/Down).
+- `Ctrl+Shift+C` copies the translation. `Ctrl+Enter` re-runs. `Ctrl+Shift+L` clears.
 
 Optional keybind — add the contents of
 [`extras/bindings.lua.example`](extras/bindings.lua.example) to

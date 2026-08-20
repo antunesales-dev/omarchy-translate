@@ -70,7 +70,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "󰗊"
-    tooltipText: "Translate"
+    tooltipText: "Translate selection"
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
     }
