@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -280,6 +280,19 @@ class InputGuardTests(HelperMixin):
         self.assertIn("too large", str(ctx.exception))
 
 
+class OcrLangsTests(HelperMixin):
+    def test_list_ocr_langs_treats_por_as_installed(self):
+        fake = Mock(stdout="List of available languages:\neng\nosd\npor\n")
+        with (
+            patch.object(self.mod, "have", return_value=True),
+            patch.object(self.mod, "run", return_value=fake),
+        ):
+            data = self.mod.list_ocr_langs()
+        self.assertEqual(data["installed"], ["eng", "por"])
+        por = next(item for item in data["available"] if item["code"] == "por")
+        self.assertTrue(por["installed"])
+
+
 class StaticReviewTests(unittest.TestCase):
     def test_panel_does_not_put_api_key_on_argv(self):
         text = (ROOT / "Panel.qml").read_text(encoding="utf-8")
@@ -372,6 +385,10 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn('omarchy pkg add "$1"', panel)
         self.assertIn('"espeak-ng"', panel)
         self.assertNotIn("tesseract-data-\" + code", panel)
+        self.assertIn('"ocr-langs"', panel)
+        self.assertIn("ocrPorReady", panel)
+        self.assertIn("omarchy-translate-ocr", panel)
+        self.assertIn("OCR a region", panel)
         self.assertIn('wl-paste --no-newline > "$1"', panel)
         self.assertNotIn("wl-paste --no-newline\" + flag", panel)
         self.assertIn("File is too large", panel)

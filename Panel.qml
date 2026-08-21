@@ -102,6 +102,8 @@ Panel {
   property string speakStatus: ""
   property string speakLang: "en"
   property bool espeakReady: false
+  property bool ocrPorReady: false
+  property var ocrInstalled: []
   property bool pairPinned: root.setting("pairPinned", false) === true || root.setting("pairPinned", false) === "true"
   property bool watchClipboard: root.setting("watchClipboard", false) === true || root.setting("watchClipboard", false) === "true"
   property bool historyOpen: false
@@ -115,7 +117,7 @@ Panel {
     "How to use",
     "• Click the bar icon and type, or copy text and open the panel.",
     "• Super+Shift+T copies the selection then opens (optional Hypr bind).",
-    "• Super+Shift+Print OCRs a region (optional bind).",
+    "• Super+Shift+Print OCRs a region (optional bind). The document icon does the same from the panel.",
     "• Super+Shift+Alt+T compact popup (optional bind).",
     "• Drop a .txt or .srt file onto this panel.",
     "• Speaker icons read original or translation. If espeak-ng is missing, a terminal opens to install it.",
@@ -127,7 +129,7 @@ Panel {
     "• LibreTranslate — local/open source. Never falls back to Google or MyMemory. Optional Docker: bin/omarchy-translate-setup-lt (localhost only).",
     "",
     "Toolbar",
-    "Swap languages • pin pair • paste into app • auto-copy • clipboard watch • history • this guide • install Portuguese OCR.",
+    "Swap languages • pin pair • paste into app • auto-copy • clipboard watch • history • this guide • OCR a region.",
     "",
     "Privacy",
     "Same-language text is not sent out. URLs, emails, and common API tokens are redacted. Short words can show an English gloss. Cache lasts a week. Default engine leaves your machine; LibreTranslate stays on the URL you set (http/https only).",
@@ -182,8 +184,10 @@ Panel {
   readonly property int charCount: String(sourceBox.text || "").length
 
   onOpenedChanged: {
-    if (root.opened)
+    if (root.opened) {
       root.refreshHistory()
+      root.refreshOcrLangs()
+    }
   }
 
   onSettingsChanged: {
@@ -482,8 +486,35 @@ Panel {
     dropFile.reload()
   }
 
+  function loadOcrLangs(raw) {
+    try {
+      var data = JSON.parse(raw || "{}")
+      var installed = Array.isArray(data.installed) ? data.installed : []
+      root.ocrInstalled = installed
+      root.ocrPorReady = installed.indexOf("por") !== -1
+    } catch (e) {
+      root.ocrInstalled = []
+      root.ocrPorReady = false
+    }
+  }
+
+  function refreshOcrLangs() {
+    ocrLangsProc.running = false
+    ocrLangsProc.command = [root.helperPath, "ocr-langs"]
+    ocrLangsProc.running = true
+  }
+
+  function captureOcr() {
+    root.close()
+    Quickshell.execDetached([root.pluginDir + "/bin/omarchy-translate-ocr"])
+  }
+
   function installOcrLang(code) {
     if (!/^[a-z0-9_]+$/.test(String(code || ""))) return
+    if (root.ocrInstalled.indexOf(String(code)) !== -1) {
+      root.captureOcr()
+      return
+    }
     Quickshell.execDetached([
       "xdg-terminal-exec",
       "-e",
@@ -918,10 +949,15 @@ Panel {
             width: Style.space(28)
             iconText: "󰺯"
             iconSize: Style.font.body
-            tooltipText: "Install Portuguese OCR language"
-            foreground: root.fg
+            tooltipText: root.ocrPorReady ? "OCR a region" : "Install Portuguese OCR language"
+            foreground: root.ocrPorReady ? root.accent : root.fg
             fontFamily: root.fontFamily
-            onClicked: root.installOcrLang("por")
+            onClicked: {
+              if (root.ocrPorReady)
+                root.captureOcr()
+              else
+                root.installOcrLang("por")
+            }
           }
         }
 
@@ -1336,6 +1372,16 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.loadHistory(String(text || ""))
+    }
+  }
+
+  Process {
+    id: ocrLangsProc
+    command: [root.helperPath, "ocr-langs"]
+    running: true
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.loadOcrLangs(String(text || ""))
     }
   }
 

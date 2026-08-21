@@ -85,8 +85,8 @@ Same-language text is not sent to a translator. URLs, emails, and common
 API tokens are redacted before a network call. Short selections also
 show an English dictionary gloss. Translations are cached locally for a
 week. Drop a `.txt` or `.srt` file on the panel to translate it. The
-document icon in the toolbar installs Portuguese OCR data
-(`tesseract-data-por`) in a terminal.
+document icon OCRs a screen region. If Portuguese OCR data is missing,
+it opens a terminal to install `tesseract-data-por`.
 
 ## Engines
 
