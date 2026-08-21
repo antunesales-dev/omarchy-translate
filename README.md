@@ -125,7 +125,7 @@ Typical Omarchy already has Python 3.11+, `wl-clipboard`, `grim`,
 
 Optional:
 
-- `espeak-ng` — speak original/translation (`omarchy pkg add espeak-ng`)
+- `espeak-ng` — speak original/translation. The speaker button opens a terminal to install it if missing.
 - `docker` — local LibreTranslate
 - `tesseract-data-por` (or other `tesseract-data-*`) for extra OCR languages
 

@@ -913,7 +913,7 @@ def detect_language(cfg: Config, text: str) -> str:
 
 def speak_text(text: str, lang: str) -> None:
     if not have("espeak-ng") and not have("espeak"):
-        raise RuntimeError("Install espeak-ng to hear translations")
+        fail("missing-espeak", 2)
     bin_name = "espeak-ng" if have("espeak-ng") else "espeak"
     voice = SPEAK_VOICES.get(normalize_lang(lang), SPEAK_VOICES.get(normalize_lang(lang).split("-")[0], "en"))
     result = run([bin_name, "-v", voice, "--", text[:1500]])

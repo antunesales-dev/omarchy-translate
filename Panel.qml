@@ -101,6 +101,7 @@ Panel {
   property string speakWhich: ""
   property string speakStatus: ""
   property string speakLang: "en"
+  property bool espeakReady: false
   property bool pairPinned: root.setting("pairPinned", false) === true || root.setting("pairPinned", false) === "true"
   property bool watchClipboard: root.setting("watchClipboard", false) === true || root.setting("watchClipboard", false) === "true"
   property bool historyOpen: false
@@ -117,7 +118,7 @@ Panel {
     "• Super+Shift+Print OCRs a region (optional bind).",
     "• Super+Shift+Alt+T compact popup (optional bind).",
     "• Drop a .txt or .srt file onto this panel.",
-    "• Speaker icons read original or translation (needs espeak-ng). Click again to stop.",
+    "• Speaker icons read original or translation. If espeak-ng is missing, a terminal opens to install it.",
     "• Paste sends the translation into the focused app.",
     "",
     "Engines",
@@ -359,6 +360,19 @@ Panel {
     translator.running = true
   }
 
+  function installSpeech() {
+    Quickshell.execDetached([
+      "xdg-terminal-exec",
+      "-e",
+      "bash",
+      "-c",
+      'echo "Translate needs espeak-ng to speak."; omarchy pkg add "$1"; echo; echo Done. Click speak again. Press Enter.; read',
+      "omarchy-translate-speech",
+      "espeak-ng"
+    ])
+    root.speakStatus = "Installing espeak-ng — password in the terminal, then click speak again"
+  }
+
   function speak(which) {
     if (root.speaking && root.speakWhich === which) {
       speakProc.running = false
@@ -374,6 +388,11 @@ Panel {
     if (lang === "auto") lang = "en"
     root.speakLang = lang
     root.speakWhich = which
+    if (!root.espeakReady) {
+      espeakCheck.running = false
+      espeakCheck.running = true
+      return
+    }
     root.speakQueued = true
     root.speakStatus = which === "source" ? "Speaking original…" : "Speaking translation…"
     sourceFile.setText(String(text).trim() + "\n")
@@ -1309,12 +1328,39 @@ Panel {
   }
 
   Process {
+    id: espeakCheck
+    command: ["sh", "-c", "command -v espeak-ng >/dev/null || command -v espeak >/dev/null"]
+    onExited: function(code) {
+      root.espeakReady = (code === 0)
+      if (code !== 0) {
+        root.speakQueued = false
+        root.speaking = false
+        root.installSpeech()
+        return
+      }
+      if (root.speakWhich === "" || root.speaking || root.speakQueued)
+        return
+      var text = root.speakWhich === "source" ? sourceBox.text : root.resultText
+      if (!text || !String(text).trim()) return
+      root.speakQueued = true
+      root.speakStatus = root.speakWhich === "source" ? "Speaking original…" : "Speaking translation…"
+      sourceFile.setText(String(text).trim() + "\n")
+      helperFallback.restart()
+    }
+  }
+
+  Process {
     id: speakProc
     onExited: function(code) {
       root.speaking = false
       root.speakWhich = ""
+      if (code === 2) {
+        root.espeakReady = false
+        root.installSpeech()
+        return
+      }
       if (code !== 0)
-        root.speakStatus = "Speech failed — install espeak-ng"
+        root.speakStatus = "Speech failed"
       else
         root.speakStatus = ""
     }
