@@ -420,8 +420,8 @@ Panel {
       return
     }
     root.translateQueued = true
-    if (root.engine === "libretranslate")
-      keyFile.setText(String(root.libretranslateKey || ""))
+    if (root.engine === "libretranslate" && String(root.libretranslateKey || "").trim() !== "")
+      keyFile.setText(String(root.libretranslateKey))
     sourceFile.setText(String(text).trim() + "\n")
     helperFallback.restart()
   }
@@ -548,14 +548,25 @@ Panel {
     return false
   }
 
+  function languageLabel(code) {
+    var c = String(code || "")
+    if (!c || c === "auto") return ""
+    for (var i = 0; i < root.languages.length; i++)
+      if (root.languages[i].value === c)
+        return root.languages[i].label
+    return ""
+  }
+
   function loadDroppedFile(url) {
-    var path = String(url || "")
-    if (path.indexOf("file://") === 0) {
-      path = path.substring(7)
-      if (path.indexOf("localhost/") === 0)
-        path = path.substring(9)
-      try { path = decodeURIComponent(path) } catch (e) { return }
-    }
+    var raw = String(url || "")
+    if (raw.indexOf("file://") !== 0) return
+    var path = raw.substring(7)
+    if (path.indexOf("localhost/") === 0)
+      path = path.substring(9)
+    try { path = decodeURIComponent(path) } catch (e) { return }
+    if (!path || path.charAt(0) !== "/") return
+    var home = Quickshell.env("HOME") || ""
+    if (!home || (path !== home && path.indexOf(home + "/") !== 0)) return
     var lower = path.toLowerCase()
     if (!(lower.endsWith(".txt") || lower.endsWith(".srt"))) return
     if (path.indexOf("..") !== -1) return
@@ -869,9 +880,12 @@ Panel {
           Dropdown {
             id: sourceDropdown
             width: (parent.width - swapButton.width - pinButton.width - Style.space(18)) * 0.5
-            label: root.detectedSrc !== "" && root.sourceLang === "auto"
-              ? ("From · " + root.detectedSrc)
-              : "From"
+            label: {
+              var name = root.languageLabel(root.detectedSrc)
+              if (name && root.sourceLang === "auto")
+                return "From · " + name
+              return "From"
+            }
             options: root.languages
             foreground: root.fg
             fontFamily: root.fontFamily
@@ -1132,7 +1146,9 @@ Panel {
             id: transLabel
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: root.skipped ? ("Already " + (root.detectedSrc || "this language")) : (root.fromCache ? "Translation (cached)" : "Translation")
+            text: root.skipped
+              ? ("Already " + (root.languageLabel(root.detectedSrc) || "this language"))
+              : (root.fromCache ? "Translation (cached)" : "Translation")
             textFormat: Text.PlainText
             color: Qt.darker(root.fg, 1.4)
             font.family: root.fontFamily

@@ -14,7 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
+from urllib.request import Request
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "bin" / "omarchy-translate"
@@ -145,6 +146,17 @@ class KeyHandlingTests(HelperMixin):
         cfg = self.mod.apply_overrides(self.mod.Config(), args)
         self.assertEqual(cfg.libretranslate_api_key, "cli-secret")
 
+    def test_empty_key_file_does_not_wipe_existing_key(self):
+        folder = Path(self._tmpdir.name) / "omarchy-translate"
+        folder.mkdir(parents=True)
+        (folder / "lt.key").write_text("\n", encoding="utf-8")
+        cfg = self.mod.Config(libretranslate_api_key="toml-secret")
+        args = self.mod.parse_args([])
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": self._tmpdir.name}):
+            os.environ.pop("OMARCHY_TRANSLATE_LT_KEY", None)
+            cfg = self.mod.apply_overrides(cfg, args)
+        self.assertEqual(cfg.libretranslate_api_key, "toml-secret")
+
     def test_key_file_used_when_env_and_cli_missing(self):
         key = Path(self._tmpdir.name) / "omarchy-translate" / "lt.key"
         key.parent.mkdir(parents=True)
@@ -183,6 +195,17 @@ class LibreTranslateIsolationTests(HelperMixin):
             detect.assert_called_once()
             google.assert_not_called()
             mymemory.assert_not_called()
+
+    def test_lt_skip_does_not_call_dictionary(self):
+        cfg = self.mod.Config(engine="libretranslate", fallback=True, source="auto", target="en")
+        with (
+            patch.object(self.mod, "detect_language", return_value="en"),
+            patch.object(self.mod, "fetch_definition") as gloss,
+            patch.object(self.mod, "history_add"),
+        ):
+            result = self.mod.translate_text(cfg, "cat")
+        self.assertTrue(result.skipped)
+        gloss.assert_not_called()
 
     def test_lt_detect_failure_does_not_fall_back_to_google(self):
         cfg = self.mod.Config(engine="libretranslate")
@@ -302,6 +325,13 @@ class HttpLimitTests(HelperMixin):
 
 
 class InputGuardTests(HelperMixin):
+    def test_http_redirects_are_refused(self):
+        handler = self.mod._HttpOnlyRedirect()
+        req = Request("http://127.0.0.1:5000/translate")
+        with self.assertRaises(URLError) as ctx:
+            handler.redirect_request(req, None, 307, "tmp", {}, "http://evil.example/steal")
+        self.assertIn("redirect", str(ctx.exception).lower())
+
     def test_file_url_is_rejected_as_libretranslate_endpoint(self):
         with self.assertRaises(RuntimeError):
             self.mod.validate_libretranslate_url("file:///etc/passwd")
@@ -313,6 +343,8 @@ class InputGuardTests(HelperMixin):
             self.mod.validate_libretranslate_url("http://127.0.0.1:5000/"),
             "http://127.0.0.1:5000",
         )
+        with self.assertRaises(RuntimeError):
+            self.mod.validate_libretranslate_url("http://127.0.0.1:5000/\r\nX")
 
     def test_http_json_rejects_non_http_scheme(self):
         with self.assertRaises(RuntimeError) as ctx:
@@ -463,6 +495,9 @@ class StaticReviewTests(unittest.TestCase):
         text = (ROOT / "Panel.qml").read_text(encoding="utf-8")
         self.assertIn('lower.endsWith(".txt")', text)
         self.assertIn('path.indexOf("..")', text)
+        self.assertIn('raw.indexOf("file://") !== 0', text)
+        self.assertIn("languageLabel", text)
+        self.assertNotIn('"From · " + root.detectedSrc', text)
         self.assertIn("/^[a-z0-9_]+$/", text)
 
     def test_user_facing_text_is_plain(self):

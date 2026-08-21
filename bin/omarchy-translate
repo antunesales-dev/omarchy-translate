@@ -501,9 +501,7 @@ MAX_TEXT_BYTES = 400_000
 
 class _HttpOnlyRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if urlparse(newurl).scheme not in ("http", "https"):
-            raise URLError("Refusing redirect to a non-http URL")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        raise URLError("Refusing HTTP redirects")
 
 
 _OPENER = build_opener(_HttpOnlyRedirect)
@@ -513,6 +511,8 @@ def validate_libretranslate_url(url: str) -> str:
     raw = (url or "").strip()
     if not raw:
         raise RuntimeError("Set libretranslate_url in preferences first")
+    if re.search(r"[\x00-\x1f\x7f]", raw):
+        raise RuntimeError("LibreTranslate URL is invalid")
     parsed = urlparse(raw)
     if parsed.scheme not in ("http", "https"):
         raise RuntimeError("LibreTranslate URL must be http or https")
@@ -916,6 +916,12 @@ def is_word_query(text: str) -> bool:
     return 1 <= len(words) <= 3 and len(compact) <= 48
 
 
+def maybe_definition(cfg: Config, word: str) -> str:
+    if cfg.engine == "libretranslate" or not word:
+        return ""
+    return fetch_definition(word)
+
+
 def fetch_definition(word: str) -> str:
     cleaned = re.sub(r"[^\w\s'-]", "", word).strip()
     if not cleaned:
@@ -994,7 +1000,7 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
             redacted=did_redact,
         )
         if is_word_query(cleaned):
-            result.definition = fetch_definition(cleaned if detected == "en" else "")
+            result.definition = maybe_definition(cfg, cleaned if detected == "en" else "")
         history_add(cleaned, result)
         return result
 
@@ -1012,7 +1018,7 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
             redacted=did_redact,
         )
         if is_word_query(cleaned):
-            result.definition = fetch_definition(result.text if dst == "en" else cleaned)
+            result.definition = maybe_definition(cfg, result.text if dst == "en" else cleaned)
         history_add(cleaned, result)
         return result
 
@@ -1033,7 +1039,7 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
     cache_put(key, result)
     result.text = restore_tokens(restore_tokens(result.text, secret_map), gloss_map)
     if is_word_query(cleaned):
-        result.definition = fetch_definition(result.text if dst == "en" else cleaned)
+        result.definition = maybe_definition(cfg, result.text if dst == "en" else cleaned)
     history_add(cleaned, result)
     return result
 
@@ -1888,9 +1894,11 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         key_path = runtime_key_path()
         if key_path.is_file() and not key_path.is_symlink():
             try:
-                cfg.libretranslate_api_key = key_path.read_text(encoding="utf-8")[:4096].strip()
+                file_key = key_path.read_text(encoding="utf-8")[:4096].strip()
             except OSError:
-                pass
+                file_key = ""
+            if file_key:
+                cfg.libretranslate_api_key = file_key
     return cfg
 
 
