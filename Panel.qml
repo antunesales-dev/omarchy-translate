@@ -747,7 +747,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: sourceBox.editor
-    contentWidth: panel.fittedContentWidth(Style.space(500))
+    contentWidth: panel.fittedContentWidth(Style.space(root.helpOpen ? 640 : 500))
     contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight, Style.space(760))
 
     Item {
@@ -965,7 +965,7 @@ Panel {
           id: helpFlick
           width: parent.width
           visible: root.helpOpen
-          height: visible ? Math.min(helpBody.implicitHeight, Style.space(420)) : 0
+          height: visible ? Math.min(helpBody.implicitHeight, Style.space(640)) : 0
           clip: true
           boundsBehavior: Flickable.StopAtBounds
           flickableDirection: Flickable.VerticalFlick

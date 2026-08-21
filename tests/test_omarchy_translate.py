@@ -340,6 +340,8 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn("Engines", panel)
         self.assertIn("Privacy", panel)
         self.assertIn("helpFlick", panel)
+        self.assertIn("Style.space(640)", panel)
+        self.assertIn("root.helpOpen ? 640 : 500", panel)
         self.assertIn("histFlick", panel)
         self.assertIn("historyMeta", panel)
         helperSrc = (ROOT / "bin" / "omarchy-translate").read_text(encoding="utf-8")
