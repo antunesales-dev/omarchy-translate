@@ -471,6 +471,7 @@ Panel {
         id: editor
         width: Math.max(1, flick.width - root.scrollGutter)
         height: contentHeight + topPadding + bottomPadding
+        textFormat: TextEdit.PlainText
         color: field.boxInk
         selectionColor: root.selectionTint
         selectedTextColor: field.boxInk
@@ -511,6 +512,7 @@ Panel {
         rightPadding: editor.rightPadding
         topPadding: editor.topPadding
         text: field.placeholder
+        textFormat: Text.PlainText
         color: Qt.darker(field.boxInk, 1.6)
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -746,6 +748,7 @@ Panel {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             text: "Original"
+            textFormat: Text.PlainText
             color: Qt.darker(root.fg, 1.4)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -785,6 +788,7 @@ Panel {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             text: root.skipped ? ("Already " + (root.detectedSrc || "this language")) : (root.fromCache ? "Translation (cached)" : "Translation")
+            textFormat: Text.PlainText
             color: Qt.darker(root.fg, 1.4)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -818,6 +822,7 @@ Panel {
           visible: root.definitionText !== ""
           height: visible ? implicitHeight : 0
           text: root.definitionText
+          textFormat: Text.PlainText
           color: Qt.darker(root.fg, 1.25)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -851,6 +856,7 @@ Panel {
             anchors.rightMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
             text: root.busy ? "Translating…" : (root.charCount > 0 ? (root.charCount + " chars") : "")
+            textFormat: Text.PlainText
             color: root.busy ? root.accent : Qt.darker(root.fg, 1.5)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -881,6 +887,7 @@ Panel {
 
           Text {
             text: root.historyItems.length ? "Recent translations" : "No history yet"
+            textFormat: Text.PlainText
             color: Qt.darker(root.fg, 1.4)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -892,8 +899,8 @@ Panel {
             Button {
               required property var modelData
               width: contentColumn.width
-              text: String(modelData.source || "").replace(/\n/g, " ").slice(0, 48)
-              tooltipText: String(modelData.text || "").slice(0, 200)
+              text: String(modelData.source || "").replace(/[<>]/g, "").replace(/\n/g, " ").slice(0, 48)
+              tooltipText: String(modelData.text || "").replace(/[<>]/g, "").slice(0, 200)
               foreground: root.fg
               fontFamily: root.fontFamily
               onClicked: root.restoreHistory(modelData)

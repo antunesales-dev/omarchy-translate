@@ -7,6 +7,7 @@ import importlib.machinery
 import importlib.util
 import io
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -300,6 +301,20 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn('lower.endsWith(".txt")', text)
         self.assertIn('path.indexOf("..")', text)
         self.assertIn("/^[a-z0-9_]+$/", text)
+
+    def test_user_facing_text_is_plain(self):
+        for name in ("Overlay.qml", "Panel.qml"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            opens = len(re.findall(r"^\s*Text \{", text, re.M))
+            plains = text.count("textFormat: Text.PlainText")
+            self.assertGreater(opens, 0, name)
+            self.assertEqual(opens, plains, f"{name}: every Text must set Text.PlainText")
+        panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")
+        self.assertIn("textFormat: TextEdit.PlainText", panel)
+        overlay = (ROOT / "Overlay.qml").read_text(encoding="utf-8")
+        self.assertIn("root.sourceText", overlay)
+        self.assertIn("root.resultText", overlay)
+        self.assertIn("root.definitionText", panel)
 
     def test_shell_snippets_do_not_concatenate_user_data(self):
         panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")

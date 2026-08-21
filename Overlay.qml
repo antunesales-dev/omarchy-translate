@@ -155,6 +155,7 @@ Item {
         Text {
           width: parent.width
           text: root.sourceText !== "" ? root.sourceText : "No selection"
+          textFormat: Text.PlainText
           color: root.foreground
           font.family: Style.font.menuFamily
           font.pixelSize: Style.font.caption
@@ -167,6 +168,7 @@ Item {
         Text {
           width: parent.width
           text: root.busy ? "Translating…" : (root.errorText !== "" ? root.errorText : (root.resultText !== "" ? root.resultText : ""))
+          textFormat: Text.PlainText
           color: root.foreground
           font.family: Style.font.menuFamily
           font.pixelSize: Style.font.body
