@@ -115,6 +115,10 @@ Panel {
   readonly property string clipPath: root.runtimeDir + "/clip.txt"
   readonly property string inPath: root.runtimeDir + "/in.txt"
   readonly property string outPath: root.runtimeDir + "/out.json"
+  readonly property string copyPath: root.runtimeDir + "/copy.txt"
+  readonly property string keyPath: root.runtimeDir + "/lt.key"
+  readonly property int maxTextChars: 100000
+  property bool copyQueued: false
   readonly property string pluginDir: {
     var url = Qt.resolvedUrl(".").toString()
     if (url.indexOf("file://") === 0) url = url.substring(7)
@@ -215,6 +219,11 @@ Panel {
       sourceBox.editor.forceActiveFocus()
       return
     }
+    if (text.length > root.maxTextChars) {
+      root.errorText = "Clipboard is too large"
+      sourceBox.editor.forceActiveFocus()
+      return
+    }
     if (sourceBox.text === text && root.resultText !== "") return
     sourceBox.text = text
     sourceBox.resetScroll()
@@ -276,7 +285,14 @@ Panel {
     }
     busy = true
     errorText = ""
+    if (String(text).length > root.maxTextChars) {
+      errorText = "Text is too large"
+      busy = false
+      return
+    }
     root.translateQueued = true
+    if (root.engine === "libretranslate")
+      keyFile.setText(String(root.libretranslateKey || ""))
     sourceFile.setText(String(text).trim() + "\n")
     helperFallback.restart()
   }
@@ -290,9 +306,6 @@ Panel {
     }
     if (!root.translateQueued) return
     root.translateQueued = false
-    translator.environment = {
-      "OMARCHY_TRANSLATE_LT_KEY": root.engine === "libretranslate" ? String(root.libretranslateKey || "") : ""
-    }
     translator.command = root.helperCommand()
     translator.running = true
   }
@@ -381,9 +394,9 @@ Panel {
 
   function copyResultToClipboard() {
     if (!root.resultText) return
-    Quickshell.execDetached(["bash", "-c", 'printf %s "$1" | wl-copy', "wl-copy", root.resultText])
-    root.copied = true
-    copyFeedback.restart()
+    root.copyQueued = true
+    copyFile.setText(root.resultText)
+    copyKick.restart()
   }
 
   function clearAll() {
@@ -904,6 +917,18 @@ Panel {
   }
 
   Timer {
+    id: copyKick
+    interval: 80
+    onTriggered: {
+      if (!root.copyQueued) return
+      root.copyQueued = false
+      Quickshell.execDetached([root.helperPath, "copy", "--file", root.copyPath])
+      root.copied = true
+      copyFeedback.restart()
+    }
+  }
+
+  Timer {
     id: copyFeedback
     interval: 700
     onTriggered: root.copied = false
@@ -931,10 +956,27 @@ Panel {
     id: dropFile
     printErrors: false
     onLoaded: {
-      sourceBox.text = text()
+      var body = String(text() || "")
+      if (body.length > root.maxTextChars) {
+        root.errorText = "File is too large"
+        return
+      }
+      sourceBox.text = body
       sourceBox.resetScroll()
       root.translate()
     }
+  }
+
+  FileView {
+    id: copyFile
+    path: root.copyPath
+    printErrors: false
+  }
+
+  FileView {
+    id: keyFile
+    path: root.keyPath
+    printErrors: false
   }
 
   FileView {

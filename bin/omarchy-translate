@@ -280,7 +280,19 @@ def runtime_dir() -> Path:
         os.chmod(path, 0o700)
     except OSError:
         pass
+    try:
+        for child in path.iterdir():
+            if child.is_file() and not child.is_symlink():
+                os.chmod(child, 0o600)
+    except OSError:
+        pass
     return path
+
+
+def runtime_key_path() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    folder = Path(base) / "omarchy-translate" if base else Path.home() / ".cache" / "omarchy-translate"
+    return folder / "lt.key"
 
 
 def write_private(path: Path, text: str) -> None:
@@ -1335,8 +1347,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("prefs", "init", "history", "detect", "speak", "setup-lt", "ocr-langs", "ensure-dir"),
-        help="prefs, init, history, detect, speak, setup-lt, ocr-langs, or ensure-dir",
+        choices=("prefs", "init", "history", "detect", "speak", "setup-lt", "ocr-langs", "ensure-dir", "copy"),
+        help="prefs, init, history, detect, speak, setup-lt, ocr-langs, ensure-dir, or copy",
     )
     parser.add_argument("--text", help="Translate this text instead of the clipboard")
     parser.add_argument("--file", help="Read text to translate from a file")
@@ -1388,6 +1400,13 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         cfg.libretranslate_api_key = env_key
     elif args.libretranslate_key:
         cfg.libretranslate_api_key = args.libretranslate_key
+    else:
+        key_path = runtime_key_path()
+        if key_path.is_file() and not key_path.is_symlink():
+            try:
+                cfg.libretranslate_api_key = key_path.read_text(encoding="utf-8")[:4096].strip()
+            except OSError:
+                pass
     return cfg
 
 
@@ -1407,6 +1426,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "ensure-dir":
         print(runtime_dir())
         ensure_config_dir()
+        return 0
+
+    if args.command == "copy":
+        text = read_input_text(args, cfg)
+        if not wl_copy(text):
+            fail("Could not copy to the clipboard")
         return 0
 
     if args.command == "history" or args.history_clear:

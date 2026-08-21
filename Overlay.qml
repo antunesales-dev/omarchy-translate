@@ -34,6 +34,8 @@ Item {
   }
   readonly property string inPath: root.runtimeDir + "/in.txt"
   readonly property string outPath: root.runtimeDir + "/out.json"
+  readonly property string copyPath: root.runtimeDir + "/copy.txt"
+  property bool copyQueued: false
   readonly property color background: Color.menu.background
   readonly property color foreground: Color.menu.text
   readonly property color border: Color.menu.border
@@ -64,11 +66,22 @@ Item {
     else root.open("{}")
   }
 
+  function copyResultToClipboard() {
+    if (!root.resultText) return
+    root.copyQueued = true
+    copyFile.setText(root.resultText)
+    copyKick.restart()
+  }
+
   function translateClipboard(text) {
     var cleaned = String(text || "").replace(/\s+$/, "")
     root.sourceText = cleaned
     if (!cleaned) {
       root.errorText = "Clipboard is empty"
+      return
+    }
+    if (cleaned.length > 100000) {
+      root.errorText = "Clipboard is too large"
       return
     }
     root.busy = true
@@ -171,7 +184,7 @@ Item {
             fontFamily: Style.font.menuFamily
             enabled: root.resultText !== ""
             onClicked: {
-              Quickshell.execDetached(["bash", "-c", 'printf %s "$1" | wl-copy', "wl-copy", root.resultText])
+              root.copyResultToClipboard()
               root.dismiss()
             }
           }
@@ -181,7 +194,7 @@ Item {
             fontFamily: Style.font.menuFamily
             enabled: root.resultText !== ""
             onClicked: {
-              Quickshell.execDetached(["bash", "-c", 'printf %s "$1" | wl-copy', "wl-copy", root.resultText])
+              root.copyResultToClipboard()
               root.dismiss()
               Quickshell.execDetached([root.pluginDir + "/bin/omarchy-translate-paste"])
             }
@@ -211,6 +224,22 @@ Item {
     id: inFile
     path: root.inPath
     printErrors: false
+  }
+
+  FileView {
+    id: copyFile
+    path: root.copyPath
+    printErrors: false
+  }
+
+  Timer {
+    id: copyKick
+    interval: 80
+    onTriggered: {
+      if (!root.copyQueued) return
+      root.copyQueued = false
+      Quickshell.execDetached([root.helperPath, "copy", "--file", root.copyPath])
+    }
   }
 
   FileView {

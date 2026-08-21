@@ -94,8 +94,10 @@ If Google or MyMemory fails, the helper tries the other remote engine
 unless you pass `--no-fallback`. **LibreTranslate never falls back** to
 Google or MyMemory — a down local instance is an error, not a leak.
 
-The LibreTranslate API key is passed in `OMARCHY_TRANSLATE_LT_KEY`, not
-on the process command line.
+The LibreTranslate API key is read from a 0600 file under
+`$XDG_RUNTIME_DIR` (or `OMARCHY_TRANSLATE_LT_KEY`), never from process
+arguments. Copy uses `omarchy-translate copy --file`, so the
+translation is not visible in `ps`.
 
 | Engine | What it is | Off-machine |
 |---|---|---|

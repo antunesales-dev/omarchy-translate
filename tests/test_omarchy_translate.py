@@ -74,6 +74,15 @@ class KeyHandlingTests(HelperMixin):
         cfg = self.mod.apply_overrides(self.mod.Config(), args)
         self.assertEqual(cfg.libretranslate_api_key, "cli-secret")
 
+    def test_key_file_used_when_env_and_cli_missing(self):
+        key = Path(self._tmpdir.name) / "omarchy-translate" / "lt.key"
+        key.parent.mkdir(parents=True)
+        key.write_text("file-secret\n", encoding="utf-8")
+        args = self.mod.parse_args(["--engine", "libretranslate"])
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": self._tmpdir.name}):
+            cfg = self.mod.apply_overrides(self.mod.Config(), args)
+        self.assertEqual(cfg.libretranslate_api_key, "file-secret")
+
 
 class LibreTranslateIsolationTests(HelperMixin):
     def test_lt_translate_failure_does_not_call_google(self):
@@ -266,7 +275,8 @@ class StaticReviewTests(unittest.TestCase):
     def test_panel_does_not_put_api_key_on_argv(self):
         text = (ROOT / "Panel.qml").read_text(encoding="utf-8")
         self.assertNotIn("--libretranslate-key", text)
-        self.assertIn("OMARCHY_TRANSLATE_LT_KEY", text)
+        self.assertNotIn("OMARCHY_TRANSLATE_LT_KEY", text)
+        self.assertIn("lt.key", text)
         self.assertIn("--no-fallback", text)
 
     def test_scratch_files_are_not_world_tmp(self):
@@ -294,14 +304,18 @@ class StaticReviewTests(unittest.TestCase):
     def test_shell_snippets_do_not_concatenate_user_data(self):
         panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")
         overlay = (ROOT / "Overlay.qml").read_text(encoding="utf-8")
-        self.assertIn('printf %s "$1" | wl-copy', panel)
-        self.assertIn('printf %s "$1" | wl-copy', overlay)
         self.assertNotIn("Util.shellQuote", panel)
         self.assertNotIn("Util.shellQuote", overlay)
+        self.assertNotIn('printf %s "$1" | wl-copy', panel)
+        self.assertNotIn('printf %s "$1" | wl-copy', overlay)
+        self.assertIn('"copy", "--file"', panel)
+        self.assertIn('"copy", "--file"', overlay)
         self.assertIn('tesseract-data-$1', panel)
         self.assertNotIn("tesseract-data-\" + code", panel)
         self.assertIn('wl-paste --no-newline > "$1"', panel)
         self.assertNotIn("wl-paste --no-newline\" + flag", panel)
+        self.assertIn("File is too large", panel)
+        self.assertIn("Clipboard is too large", overlay)
 
     def test_manifest_id_is_not_omarchy_reserved(self):
         import json
