@@ -48,6 +48,14 @@ class HelperMixin(unittest.TestCase):
         self._tmpdir.cleanup()
 
 
+class SpeakSplitTests(HelperMixin):
+    def test_split_utterances_keeps_sentences_under_limit(self):
+        parts = self.mod.split_utterances("Hello there. How are you today? Fine.", 20)
+        self.assertTrue(parts)
+        self.assertTrue(all(len(p) <= 20 for p in parts))
+        self.assertIn("Hello there.", parts)
+
+
 class EngineOrderTests(HelperMixin):
     def test_libretranslate_never_includes_google_or_mymemory(self):
         cfg = self.mod.Config(engine="libretranslate", fallback=True)

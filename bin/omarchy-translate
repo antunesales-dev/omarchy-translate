@@ -10,6 +10,7 @@ import locale
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -911,14 +912,140 @@ def detect_language(cfg: Config, text: str) -> str:
             return ""
 
 
-def speak_text(text: str, lang: str) -> None:
+_PLAYER: subprocess.Popen[bytes] | None = None
+
+
+def _kill_player() -> None:
+    global _PLAYER
+    if _PLAYER is not None and _PLAYER.poll() is None:
+        _PLAYER.terminate()
+        try:
+            _PLAYER.wait(timeout=0.4)
+        except subprocess.TimeoutExpired:
+            _PLAYER.kill()
+    _PLAYER = None
+    subprocess.run(["pkill", "-x", "espeak-ng"], check=False, capture_output=True)
+
+
+def split_utterances(text: str, limit: int = 180) -> list[str]:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+", cleaned)
+    out: list[str] = []
+    buf = ""
+    for part in parts:
+        if len(part) <= limit:
+            cand = f"{buf} {part}".strip() if buf else part
+            if len(cand) <= limit:
+                buf = cand
+            else:
+                if buf:
+                    out.append(buf)
+                buf = part
+            continue
+        if buf:
+            out.append(buf)
+            buf = ""
+        for i in range(0, len(part), limit):
+            out.append(part[i : i + limit])
+    if buf:
+        out.append(buf)
+    return out
+
+
+def _google_tts_mp3(text: str, lang: str) -> bytes | None:
+    tl = normalize_lang(lang) or "en"
+    if tl.startswith("zh") and tl != "zh-TW":
+        tl = "zh-CN"
+    params = urlencode({"ie": "UTF-8", "client": "tw-ob", "tl": tl, "q": text})
+    url = f"https://translate.google.com/translate_tts?{params}"
+    request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "audio/mpeg"})
+    try:
+        with _OPENER.open(request, timeout=15) as response:
+            raw = read_limited(response, MAX_HTTP_BODY)
+    except (HTTPError, URLError, RuntimeError, OSError):
+        return None
+    if len(raw) < 800:
+        return None
+    if raw.lstrip()[:1] in (b"<", b"{") or raw[:15].lower().startswith(b"<!doctype"):
+        return None
+    return raw
+
+
+def _write_tts_file(chunks: list[bytes], dest: Path) -> bool:
+    folder = dest.parent
+    parts: list[Path] = []
+    try:
+        for i, blob in enumerate(chunks):
+            piece = folder / f"tts-{i}.mp3"
+            piece.write_bytes(blob)
+            os.chmod(piece, 0o600)
+            parts.append(piece)
+        if len(parts) == 1 or not have("ffmpeg"):
+            os.replace(parts[0], dest)
+            os.chmod(dest, 0o600)
+            return dest.is_file()
+        listing = folder / "tts-concat.txt"
+        listing.write_text("".join(f"file '{p}'\n" for p in parts), encoding="utf-8")
+        result = run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(dest)],
+        )
+        if result.returncode != 0 or not dest.is_file():
+            os.replace(parts[0], dest)
+        os.chmod(dest, 0o600)
+        return dest.is_file() and dest.stat().st_size > 800
+    except OSError:
+        return False
+    finally:
+        for p in parts:
+            if p.exists() and p.resolve() != dest.resolve():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+
+
+def _play_exec(path: Path) -> None:
+    if have("ffplay"):
+        os.execvp(
+            "ffplay",
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "-nostats", str(path)],
+        )
+    if have("mpv"):
+        os.execvp(
+            "mpv",
+            ["mpv", "--no-video", "--really-quiet", "--no-terminal", "--audio-display=no", str(path)],
+        )
+
+
+def speak_text(text: str, lang: str, *, allow_network: bool = True) -> None:
+    signal.signal(signal.SIGTERM, lambda *_: (_kill_player(), sys.exit(0)))
+    signal.signal(signal.SIGINT, lambda *_: (_kill_player(), sys.exit(0)))
+    uttered = split_utterances(text[:1500], 180)
+    dest = runtime_dir() / "speak.mp3"
+    if allow_network and uttered and (have("ffplay") or have("mpv")):
+        blobs: list[bytes] = []
+        for piece in uttered:
+            blob = _google_tts_mp3(piece, lang)
+            if not blob:
+                blobs = []
+                break
+            blobs.append(blob)
+        if blobs and _write_tts_file(blobs, dest):
+            _play_exec(dest)
     if not have("espeak-ng") and not have("espeak"):
         fail("missing-espeak", 2)
     bin_name = "espeak-ng" if have("espeak-ng") else "espeak"
     voice = SPEAK_VOICES.get(normalize_lang(lang), SPEAK_VOICES.get(normalize_lang(lang).split("-")[0], "en"))
-    result = run([bin_name, "-v", voice, "--", text[:1500]])
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "Speech failed")
+    if voice == "en":
+        voice = "en-us"
+    if voice == "pt":
+        voice = "pt-br"
+    os.execvp(
+        bin_name,
+        [bin_name, "-v", str(voice), "-s", "128", "-p", "42", "-g", "8", "-k", "3", "-a", "160", "--", text[:1500]],
+    )
 
 
 def have(cmd: str) -> bool:
@@ -1449,7 +1576,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "speak":
-        speak_text(read_input_text(args, cfg), args.source or cfg.resolved_target())
+        speak_text(
+            read_input_text(args, cfg),
+            args.source or cfg.resolved_target(),
+            allow_network=cfg.engine != "libretranslate",
+        )
         return 0
 
     if args.command == "ocr-langs":

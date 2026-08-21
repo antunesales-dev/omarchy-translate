@@ -350,7 +350,7 @@ Panel {
     if (root.speakQueued) {
       root.speakQueued = false
       root.speaking = true
-      speakProc.command = [root.helperPath, "speak", "--from", root.speakLang, "--file", root.inPath]
+      speakProc.command = [root.helperPath, "speak", "--engine", root.engine, "--from", root.speakLang, "--file", root.inPath]
       speakProc.running = true
       return
     }
@@ -374,13 +374,16 @@ Panel {
   }
 
   function speak(which) {
-    if (root.speaking && root.speakWhich === which) {
+    if (root.speaking) {
       speakProc.running = false
+      Quickshell.execDetached(["pkill", "-x", "espeak-ng"])
       root.speaking = false
       root.speakQueued = false
       root.speakStatus = ""
-      root.speakWhich = ""
-      return
+      if (root.speakWhich === which) {
+        root.speakWhich = ""
+        return
+      }
     }
     var text = which === "source" ? sourceBox.text : root.resultText
     var lang = which === "source" ? (root.detectedSrc || root.sourceLang) : root.targetLang
@@ -1329,7 +1332,7 @@ Panel {
 
   Process {
     id: espeakCheck
-    command: ["sh", "-c", "command -v espeak-ng >/dev/null || command -v espeak >/dev/null"]
+    command: ["sh", "-c", "command -v ffplay >/dev/null || command -v mpv >/dev/null || command -v espeak-ng >/dev/null || command -v espeak >/dev/null"]
     onExited: function(code) {
       root.espeakReady = (code === 0)
       if (code !== 0) {
