@@ -189,7 +189,7 @@ class HttpLimitTests(HelperMixin):
         huge = b"x" * (self.mod.MAX_HTTP_ERROR_BODY + 50_000)
         err = HTTPError("http://example.test/translate", 500, "boom", hdrs={}, fp=io.BytesIO(huge))
         try:
-            with patch.object(self.mod, "urlopen", side_effect=err):
+            with patch.object(self.mod._OPENER, "open", side_effect=err):
                 with self.assertRaises(RuntimeError) as ctx:
                     self.mod.http_json("http://example.test/translate")
             self.assertIn("HTTP 500", str(ctx.exception))
@@ -215,10 +215,51 @@ class HttpLimitTests(HelperMixin):
             def __exit__(self, *args):
                 return False
 
-        with patch.object(self.mod, "urlopen", return_value=FakeResponse(body)):
+        with patch.object(self.mod._OPENER, "open", return_value=FakeResponse(body)):
             with self.assertRaises(RuntimeError) as ctx:
                 self.mod.http_json("http://example.test/translate")
         self.assertIn("exceeded", str(ctx.exception))
+
+
+class InputGuardTests(HelperMixin):
+    def test_file_url_is_rejected_as_libretranslate_endpoint(self):
+        with self.assertRaises(RuntimeError):
+            self.mod.validate_libretranslate_url("file:///etc/passwd")
+        with self.assertRaises(RuntimeError):
+            self.mod.validate_libretranslate_url("ftp://127.0.0.1:5000")
+        with self.assertRaises(RuntimeError):
+            self.mod.validate_libretranslate_url("http://127.0.0.1:5000/?api_key=secret")
+        self.assertEqual(
+            self.mod.validate_libretranslate_url("http://127.0.0.1:5000/"),
+            "http://127.0.0.1:5000",
+        )
+
+    def test_http_json_rejects_non_http_scheme(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.http_json("file:///etc/passwd")
+        self.assertIn("http", str(ctx.exception).lower())
+
+    def test_oversized_input_is_rejected(self):
+        cfg = self.mod.Config(engine="google", source="en", target="pt")
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.translate_text(cfg, "a" * (self.mod.MAX_TEXT_CHARS + 8))
+        self.assertIn("too large", str(ctx.exception))
+
+    def test_symlink_input_file_is_rejected(self):
+        real = Path(self._tmpdir.name) / "note.txt"
+        link = Path(self._tmpdir.name) / "alias.txt"
+        real.write_text("hello", encoding="utf-8")
+        link.symlink_to(real)
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.read_input_file(link)
+        self.assertIn("symlink", str(ctx.exception).lower())
+
+    def test_oversized_input_file_is_rejected(self):
+        path = Path(self._tmpdir.name) / "big.txt"
+        path.write_bytes(b"a" * (self.mod.MAX_TEXT_BYTES + 8))
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.read_input_file(path)
+        self.assertIn("too large", str(ctx.exception))
 
 
 class StaticReviewTests(unittest.TestCase):
@@ -241,6 +282,14 @@ class StaticReviewTests(unittest.TestCase):
         text = (ROOT / "bin" / "omarchy-translate-setup-lt").read_text(encoding="utf-8")
         self.assertRegex(text, r'IMAGE="libretranslate/libretranslate:v1\.9\.6@sha256:[0-9a-f]{64}"')
         self.assertNotRegex(text, r'IMAGE="[^"]*:latest"')
+        self.assertIn("-p 127.0.0.1:5000:5000", text)
+        self.assertNotRegex(text, r"-p 5000:5000")
+
+    def test_drop_requires_txt_or_srt_suffix(self):
+        text = (ROOT / "Panel.qml").read_text(encoding="utf-8")
+        self.assertIn('lower.endsWith(".txt")', text)
+        self.assertIn('path.indexOf("..")', text)
+        self.assertIn("/^[a-z0-9_]+$/", text)
 
     def test_manifest_id_is_not_omarchy_reserved(self):
         import json

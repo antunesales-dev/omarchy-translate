@@ -47,6 +47,6 @@ fi
 
 echo "Pulling pinned LibreTranslate v1.9.6 ($PIN)…"
 docker pull "$IMAGE"
-docker run -d --name "$NAME" -p 5000:5000 --restart unless-stopped "$IMAGE" >/dev/null
+docker run -d --name "$NAME" -p 127.0.0.1:5000:5000 --restart unless-stopped --pull=never "$IMAGE" >/dev/null
 echo "LibreTranslate v1.9.6 is starting at http://127.0.0.1:5000"
 echo "In the Translate panel, set Engine to LibreTranslate (URL defaults to that address)."

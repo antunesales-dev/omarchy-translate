@@ -323,14 +323,22 @@ Panel {
   }
 
   function loadDroppedFile(url) {
-    var path = String(url || "").replace(/^file:\/\//, "")
+    var path = String(url || "")
+    if (path.indexOf("file://") === 0) {
+      path = path.substring(7)
+      if (path.indexOf("localhost/") === 0)
+        path = path.substring(9)
+      try { path = decodeURIComponent(path) } catch (e) { return }
+    }
     var lower = path.toLowerCase()
-    if (lower.indexOf(".txt") < 0 && lower.indexOf(".srt") < 0) return
+    if (!(lower.endsWith(".txt") || lower.endsWith(".srt"))) return
+    if (path.indexOf("..") !== -1) return
     dropFile.path = path
     dropFile.reload()
   }
 
   function installOcrLang(code) {
+    if (!/^[a-z0-9_]+$/.test(String(code || ""))) return
     Quickshell.execDetached([
       "xdg-terminal-exec",
       "-e",

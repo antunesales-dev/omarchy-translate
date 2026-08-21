@@ -19,8 +19,8 @@ import tomllib
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 CONFIG_DIR = Path.home() / ".config" / "omarchy-translate"
 CONFIG_PATH = CONFIG_DIR / "config.toml"
@@ -317,6 +317,51 @@ def save_config(cfg: Config) -> None:
 
 MAX_HTTP_BODY = 1_048_576
 MAX_HTTP_ERROR_BODY = 4096
+MAX_TEXT_CHARS = 100_000
+MAX_TEXT_BYTES = 400_000
+
+
+class _HttpOnlyRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlparse(newurl).scheme not in ("http", "https"):
+            raise URLError("Refusing redirect to a non-http URL")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = build_opener(_HttpOnlyRedirect)
+
+
+def validate_libretranslate_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        raise RuntimeError("Set libretranslate_url in preferences first")
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https"):
+        raise RuntimeError("LibreTranslate URL must be http or https")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise RuntimeError("LibreTranslate URL must not contain credentials, query, or fragment")
+    if not parsed.hostname:
+        raise RuntimeError("LibreTranslate URL is missing a host")
+    return raw.rstrip("/")
+
+
+def cap_text(text: str) -> str:
+    cleaned = text.strip()
+    if len(cleaned) > MAX_TEXT_CHARS:
+        raise RuntimeError("Input is too large")
+    return cleaned
+
+
+def read_input_file(path: Path) -> str:
+    target = path.expanduser()
+    if target.is_symlink():
+        raise RuntimeError("Refusing to read a symlink")
+    if not target.is_file():
+        raise RuntimeError("Input path is not a regular file")
+    size = target.stat().st_size
+    if size > MAX_TEXT_BYTES:
+        raise RuntimeError("Input file is too large")
+    return cap_text(target.read_text(encoding="utf-8", errors="replace"))
 
 
 def _header_length(headers) -> int | None:
@@ -355,9 +400,12 @@ def http_json(
     req_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if headers:
         req_headers.update(headers)
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise RuntimeError("Only http(s) URLs are allowed")
     request = Request(url, data=data, headers=req_headers, method="POST" if data else "GET")
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with _OPENER.open(request, timeout=timeout) as response:
             raw = read_limited(response, MAX_HTTP_BODY)
     except HTTPError as exc:
         try:
@@ -429,9 +477,7 @@ def translate_mymemory(text: str, source: str, target: str) -> Translation:
 def translate_libretranslate(
     cfg: Config, text: str, source: str, target: str, *, html: bool = False
 ) -> Translation:
-    base = (cfg.libretranslate_url or "").rstrip("/")
-    if not base:
-        raise RuntimeError("Set libretranslate_url in preferences first")
+    base = validate_libretranslate_url(cfg.libretranslate_url or "")
     body: dict[str, str] = {
         "q": text,
         "source": "auto" if source == "auto" else source,
@@ -742,7 +788,7 @@ def list_ocr_langs() -> dict:
 
 
 def translate_text(cfg: Config, text: str, source: str | None = None, target: str | None = None) -> Translation:
-    cleaned = text.strip()
+    cleaned = cap_text(text)
     if not cleaned:
         raise RuntimeError("No text to translate")
     src = cfg.resolved_source() if source is None else source
@@ -815,9 +861,7 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
 
 
 def detect_libretranslate(cfg: Config, text: str) -> str:
-    base = (cfg.libretranslate_url or "").rstrip("/")
-    if not base:
-        raise RuntimeError("Set libretranslate_url in preferences first")
+    base = validate_libretranslate_url(cfg.libretranslate_url or "")
     body: dict[str, str] = {"q": text}
     if cfg.libretranslate_api_key:
         body["api_key"] = cfg.libretranslate_api_key
@@ -1316,12 +1360,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def read_input_text(args: argparse.Namespace, cfg: Config) -> str:
     if args.text:
-        return args.text.strip()
+        return cap_text(args.text)
     if args.file:
-        return Path(args.file).read_text(encoding="utf-8").strip()
+        return read_input_file(Path(args.file))
     if args.stdin or (not tty() and not sys.stdin.isatty()):
-        return sys.stdin.read().strip()
-    return grab_text(cfg)
+        return cap_text(sys.stdin.read(MAX_TEXT_BYTES + 1))
+    return cap_text(grab_text(cfg))
 
 
 def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
@@ -1338,7 +1382,7 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
     if args.no_fallback:
         cfg.fallback = False
     if args.libretranslate_url:
-        cfg.libretranslate_url = args.libretranslate_url
+        cfg.libretranslate_url = validate_libretranslate_url(args.libretranslate_url)
     env_key = os.environ.get("OMARCHY_TRANSLATE_LT_KEY", "")
     if env_key:
         cfg.libretranslate_api_key = env_key

@@ -110,7 +110,8 @@ bin/omarchy-translate-setup-lt
 ```
 
 Then set Engine to LibreTranslate in the panel. That setup script does
-not follow `libretranslate/libretranslate:latest`.
+not follow `libretranslate/libretranslate:latest`, binds only to
+`127.0.0.1:5000`, and only accepts `http(s)` LibreTranslate URLs.
 
 Lists, blank-line paragraphs, and simple HTML tags are preserved when
 translating.
