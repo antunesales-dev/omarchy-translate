@@ -97,6 +97,9 @@ Panel {
   property bool triedPrimary: false
   property bool translateQueued: false
   property bool speakQueued: false
+  property bool speaking: false
+  property string speakWhich: ""
+  property string speakStatus: ""
   property string speakLang: "en"
   property bool pairPinned: root.setting("pairPinned", false) === true || root.setting("pairPinned", false) === "true"
   property bool watchClipboard: root.setting("watchClipboard", false) === true || root.setting("watchClipboard", false) === "true"
@@ -323,6 +326,7 @@ Panel {
   function startHelper() {
     if (root.speakQueued) {
       root.speakQueued = false
+      root.speaking = true
       speakProc.command = [root.helperPath, "speak", "--from", root.speakLang, "--file", root.inPath]
       speakProc.running = true
       return
@@ -334,12 +338,22 @@ Panel {
   }
 
   function speak(which) {
+    if (root.speaking && root.speakWhich === which) {
+      speakProc.running = false
+      root.speaking = false
+      root.speakQueued = false
+      root.speakStatus = ""
+      root.speakWhich = ""
+      return
+    }
     var text = which === "source" ? sourceBox.text : root.resultText
     var lang = which === "source" ? (root.detectedSrc || root.sourceLang) : root.targetLang
     if (!text || !String(text).trim()) return
     if (lang === "auto") lang = "en"
     root.speakLang = lang
+    root.speakWhich = which
     root.speakQueued = true
+    root.speakStatus = which === "source" ? "Speaking original…" : "Speaking translation…"
     sourceFile.setText(String(text).trim() + "\n")
     helperFallback.restart()
   }
@@ -835,10 +849,11 @@ Panel {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             width: Style.space(28)
-            iconText: "󰕾"
+            iconText: (root.speaking && root.speakWhich === "source") ? "󰖁" : "󰕾"
             iconSize: Style.font.body
-            tooltipText: "Speak original"
-            foreground: root.fg
+            iconSpinning: root.speaking && root.speakWhich === "source"
+            tooltipText: (root.speaking && root.speakWhich === "source") ? "Stop speaking" : "Speak original"
+            foreground: (root.speaking && root.speakWhich === "source") ? root.accent : root.fg
             fontFamily: root.fontFamily
             enabled: sourceBox.text !== ""
             opacity: enabled ? 1 : 0.4
@@ -875,10 +890,11 @@ Panel {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             width: Style.space(28)
-            iconText: "󰕾"
+            iconText: (root.speaking && root.speakWhich === "result") ? "󰖁" : "󰕾"
             iconSize: Style.font.body
-            tooltipText: "Speak translation"
-            foreground: root.fg
+            iconSpinning: root.speaking && root.speakWhich === "result"
+            tooltipText: (root.speaking && root.speakWhich === "result") ? "Stop speaking" : "Speak translation"
+            foreground: (root.speaking && root.speakWhich === "result") ? root.accent : root.fg
             fontFamily: root.fontFamily
             enabled: root.resultText !== ""
             opacity: enabled ? 1 : 0.4
@@ -931,9 +947,9 @@ Panel {
             anchors.right: copyButton.left
             anchors.rightMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
-            text: root.busy ? "Translating…" : (root.charCount > 0 ? (root.charCount + " chars") : "")
+            text: root.speakStatus !== "" ? root.speakStatus : (root.busy ? "Translating…" : (root.charCount > 0 ? (root.charCount + " chars") : ""))
             textFormat: Text.PlainText
-            color: root.busy ? root.accent : Qt.darker(root.fg, 1.5)
+            color: (root.speakStatus !== "" || root.busy) ? root.accent : Qt.darker(root.fg, 1.5)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             elide: Text.ElideRight
@@ -1100,6 +1116,18 @@ Panel {
 
   Process {
     id: speakProc
+    onExited: function(code) {
+      root.speaking = false
+      root.speakWhich = ""
+      if (code !== 0)
+        root.speakStatus = "Speech failed — install espeak-ng"
+      else
+        root.speakStatus = ""
+    }
+    onRunningChanged: {
+      if (!running && root.speaking)
+        root.speaking = false
+    }
   }
 
   Process {
