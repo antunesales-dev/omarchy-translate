@@ -108,17 +108,39 @@ Panel {
   property var recentTargets: []
   property var historyItems: []
   readonly property string helpText: [
-    "In this panel",
-    "F1 or Ctrl+/          this help",
+    "Translate",
+    "Bar plugin for selected, copied, OCR’d, or dropped text. Detects the source language and translates into your system language, unless you pin a pair.",
+    "",
+    "How to use",
+    "• Click the bar icon and type, or copy text and open the panel.",
+    "• Super+Shift+T copies the selection then opens (optional Hypr bind).",
+    "• Super+Shift+Print OCRs a region (optional bind).",
+    "• Super+Shift+Alt+T compact popup (optional bind).",
+    "• Drop a .txt or .srt file onto this panel.",
+    "• Speaker icons read original or translation (needs espeak-ng). Click again to stop.",
+    "• Paste sends the translation into the focused app.",
+    "",
+    "Engines",
+    "• Google — default. Sends text off-machine.",
+    "• MyMemory — free Translated.net API.",
+    "• LibreTranslate — local/open source. Never falls back to Google or MyMemory. Optional Docker: bin/omarchy-translate-setup-lt (localhost only).",
+    "",
+    "Toolbar",
+    "Swap languages • pin pair • paste into app • auto-copy • clipboard watch • history • this guide • install Portuguese OCR.",
+    "",
+    "Privacy",
+    "Same-language text is not sent out. URLs, emails, and common API tokens are redacted. Short words can show an English gloss. Cache lasts a week. Default engine leaves your machine; LibreTranslate stays on the URL you set (http/https only).",
+    "",
+    "Keys in this panel",
+    "F1 or Ctrl+/          this guide",
     "Esc                   close",
     "Ctrl+Enter            translate",
     "Ctrl+Shift+C          copy translation",
     "Ctrl+Shift+V          paste into the app",
     "Ctrl+Shift+L          clear",
     "Ctrl+Shift+H          history",
-    "Drop a .txt / .srt    translate a file",
     "",
-    "On the desktop (if you added extras/bindings.lua)",
+    "Keys on the desktop (extras/bindings.lua)",
     "Super+Shift+T         copy selection and open",
     "Super+Shift+Print     OCR a region",
     "Super+Shift+Alt+T     compact popup",
@@ -385,6 +407,8 @@ Panel {
     var shift = event.modifiers & Qt.ShiftModifier
     if (event.key === Qt.Key_F1 || (ctrl && !shift && event.key === Qt.Key_Slash)) {
       root.helpOpen = !root.helpOpen
+      if (root.helpOpen)
+        root.historyOpen = false
       event.accepted = true
       return true
     }
@@ -410,8 +434,10 @@ Panel {
     }
     if (event.key === Qt.Key_H && ctrl && shift) {
       root.historyOpen = !root.historyOpen
-      if (root.historyOpen)
+      if (root.historyOpen) {
+        root.helpOpen = false
         root.refreshHistory()
+      }
       event.accepted = true
       return true
     }
@@ -652,17 +678,12 @@ Panel {
         width: parent.width
         spacing: Style.space(10)
 
-        Text {
+        Column {
+          id: workTop
           width: parent.width
-          visible: root.helpOpen
+          spacing: Style.space(10)
+          visible: !root.helpOpen
           height: visible ? implicitHeight : 0
-          text: root.helpText
-          textFormat: Text.PlainText
-          color: root.fg
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.Wrap
-        }
 
         Row {
           width: parent.width
@@ -757,6 +778,8 @@ Panel {
           onEditingFinished: root.persistSettings({ libretranslateUrl: text })
         }
 
+        }
+
         Row {
           width: parent.width
           spacing: Style.space(6)
@@ -805,18 +828,24 @@ Panel {
             fontFamily: root.fontFamily
             onClicked: {
               root.historyOpen = !root.historyOpen
-              if (root.historyOpen)
+              if (root.historyOpen) {
+                root.helpOpen = false
                 root.refreshHistory()
+              }
             }
           }
           Button {
             width: Style.space(28)
             iconText: "?"
             iconSize: Style.font.body
-            tooltipText: "Shortcuts (F1)"
+            tooltipText: "Guide and shortcuts (F1)"
             foreground: root.helpOpen ? root.accent : root.fg
             fontFamily: root.fontFamily
-            onClicked: root.helpOpen = !root.helpOpen
+            onClicked: {
+              root.helpOpen = !root.helpOpen
+              if (root.helpOpen)
+                root.historyOpen = false
+            }
           }
           Button {
             width: Style.space(28)
@@ -828,6 +857,47 @@ Panel {
             onClicked: root.installOcrLang("por")
           }
         }
+
+        Flickable {
+          id: helpFlick
+          width: parent.width
+          visible: root.helpOpen
+          height: visible ? Math.min(helpBody.implicitHeight, Style.space(420)) : 0
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          flickableDirection: Flickable.VerticalFlick
+          contentWidth: width
+          contentHeight: helpBody.implicitHeight
+          interactive: contentHeight > height
+
+          WheelHandler {
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            onWheel: function(event) {
+              var dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 8
+              var maxY = Math.max(0, helpFlick.contentHeight - helpFlick.height)
+              helpFlick.contentY = Math.max(0, Math.min(maxY, helpFlick.contentY - dy))
+              event.accepted = true
+            }
+          }
+
+          Text {
+            id: helpBody
+            width: helpFlick.width
+            text: root.helpText
+            textFormat: Text.PlainText
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+          }
+        }
+
+        Column {
+          id: workBottom
+          width: parent.width
+          spacing: Style.space(10)
+          visible: !root.helpOpen
+          height: visible ? implicitHeight : 0
 
         Item {
           width: parent.width
@@ -1011,6 +1081,7 @@ Panel {
               }
             }
           }
+        }
         }
       }
     }
