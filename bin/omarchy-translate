@@ -354,6 +354,31 @@ def espeak_voice(lang: str) -> str:
     return ESPEAK_VOICES.get(base, base or "en-us")
 
 
+def _concrete_lang(*codes: str) -> str:
+    for code in codes:
+        n = (code or "").strip()
+        if not n or n in {"auto", "detect", "system"}:
+            continue
+        return normalize_lang(n)
+    return ""
+
+
+def swap_pair(
+    source: str,
+    target: str,
+    *,
+    detected: str = "",
+    result_target: str = "",
+    system: str = "",
+) -> tuple[str, str] | None:
+    """Return (new_source, new_target), or None if the pair cannot be swapped."""
+    src = _concrete_lang(source, detected)
+    dst = _concrete_lang(target, result_target, system)
+    if not src or not dst or src == dst:
+        return None
+    return dst, src
+
+
 def system_language() -> str:
     for key in ("LC_ALL", "LC_MESSAGES", "LANG"):
         value = os.environ.get(key, "")
@@ -1608,12 +1633,18 @@ def result_actions_clean(cfg: Config, source_text: str, result: Translation) -> 
                 print("wl-copy is not available.")
             continue
         if action == "swap":
-            if detected in ("", "auto"):
+            swapped = swap_pair(
+                cfg.source,
+                cfg.target,
+                detected=detected,
+                result_target=current.target,
+                system=system_language(),
+            )
+            if not swapped:
                 print("Cannot swap until a source language is detected.")
                 continue
             incoming = current.text
-            cfg.source = current.target
-            cfg.target = detected
+            cfg.source, cfg.target = swapped
             current = translate_with_spinner(cfg, incoming, source=cfg.source, target=cfg.target)
             current_source = incoming
             show_result(current_source, current, cfg)
@@ -1778,8 +1809,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("prefs", "init", "history", "detect", "speak", "setup-lt", "ocr-langs", "ensure-dir", "copy"),
-        help="prefs, init, history, detect, speak, setup-lt, ocr-langs, ensure-dir, or copy",
+        choices=("prefs", "init", "history", "detect", "speak", "setup-lt", "ocr-langs", "ensure-dir", "copy", "locale"),
+        help="prefs, init, history, detect, speak, setup-lt, ocr-langs, ensure-dir, copy, or locale",
     )
     parser.add_argument("--text", help="Translate this text instead of the clipboard")
     parser.add_argument("--file", help="Read text to translate from a file")
@@ -1889,6 +1920,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "ocr-langs":
         print(json.dumps(list_ocr_langs(), ensure_ascii=False))
+        return 0
+
+    if args.command == "locale":
+        print(json.dumps({"system": system_language()}, ensure_ascii=False))
         return 0
 
     if args.command == "setup-lt":

@@ -56,6 +56,43 @@ class SpeakSplitTests(HelperMixin):
         self.assertIn("Hello there.", parts)
 
 
+class SwapPairTests(HelperMixin):
+    def test_default_auto_auto_swaps_after_detect(self):
+        """Detect → System language is the panel default. Swap must not no-op."""
+        self.assertEqual(
+            self.mod.swap_pair("auto", "auto", detected="pt", result_target="en", system="en"),
+            ("en", "pt"),
+        )
+
+    def test_swap_uses_system_language_when_target_still_auto(self):
+        self.assertEqual(
+            self.mod.swap_pair("pt", "auto", system="en"),
+            ("en", "pt"),
+        )
+
+    def test_swap_pinned_pair(self):
+        self.assertEqual(self.mod.swap_pair("en", "pt"), ("pt", "en"))
+        self.assertEqual(self.mod.swap_pair("pt-PT", "de"), ("de", "pt-PT"))
+
+    def test_swap_refuses_unknown_source(self):
+        self.assertIsNone(self.mod.swap_pair("auto", "en", detected="", system="en"))
+
+    def test_swap_refuses_same_language(self):
+        self.assertIsNone(self.mod.swap_pair("en", "auto", system="en"))
+
+    def test_panel_swap_does_not_abort_on_auto_target(self):
+        panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")
+        self.assertNotIn('if (dst === "auto") return', panel)
+        self.assertIn("resolvedTargetLang", panel)
+        self.assertIn("resolvedSourceLang", panel)
+        self.assertIn("canSwap", panel)
+        self.assertIn('"locale"', panel)
+
+    def test_locale_command_is_wired(self):
+        args = self.mod.parse_args(["locale"])
+        self.assertEqual(args.command, "locale")
+
+
 class SpeakLangTests(HelperMixin):
     def test_portuguese_uses_brazilian_neural_not_ukrainian(self):
         self.assertEqual(self.mod.normalize_lang("pt"), "pt")
@@ -416,6 +453,7 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn('"espeak-ng"', panel)
         self.assertNotIn("tesseract-data-\" + code", panel)
         self.assertIn('"ocr-langs"', panel)
+        self.assertIn('"locale"', panel)
         self.assertIn("ocrPorReady", panel)
         self.assertIn("omarchy-translate-ocr", panel)
         self.assertIn("OCR a region", panel)

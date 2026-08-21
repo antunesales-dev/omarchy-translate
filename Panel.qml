@@ -127,7 +127,25 @@ Panel {
   property string sourceText: ""
   property string resultText: ""
   property string resultLang: ""
+  property string systemLang: "en"
   property string detectedSrc: ""
+  readonly property string resolvedSourceLang: {
+    if (root.sourceLang && root.sourceLang !== "auto")
+      return root.sourceLang
+    if (root.detectedSrc && root.detectedSrc !== "auto")
+      return root.detectedSrc
+    return ""
+  }
+  readonly property string resolvedTargetLang: {
+    if (root.targetLang && root.targetLang !== "auto")
+      return root.targetLang
+    if (root.resultLang && root.resultLang !== "auto")
+      return root.resultLang
+    if (root.systemLang && root.systemLang !== "auto")
+      return root.systemLang
+    return ""
+  }
+  readonly property bool canSwap: root.resolvedSourceLang !== "" && root.resolvedTargetLang !== "" && root.resolvedSourceLang !== root.resolvedTargetLang
   property string errorText: ""
   property string definitionText: ""
   property bool skipped: false
@@ -228,6 +246,7 @@ Panel {
     if (root.opened) {
       root.refreshHistory()
       root.refreshOcrLangs()
+      root.refreshLocale()
     }
   }
 
@@ -326,25 +345,40 @@ Panel {
   }
 
   function swapLanguages() {
-    var src = root.sourceLang
-    var dst = root.targetLang
-    if (src === "auto") {
-      if (root.detectedSrc === "") return
-      src = root.detectedSrc
-    }
-    if (dst === "auto") return
+    var src = root.resolvedSourceLang
+    var dst = root.resolvedTargetLang
+    if (!src || !dst || src === dst)
+      return
     var incoming = root.resultText
     root.sourceLang = dst
     root.targetLang = src
     sourceDropdown.value = dst
     targetDropdown.value = src
     root.detectedSrc = ""
+    root.resultLang = src
     root.persistSettings({ sourceLang: dst, targetLang: src })
+    root.rememberTarget(src)
     if (incoming && incoming.length) {
       sourceBox.text = incoming
       sourceBox.resetScroll()
     }
     debounce.restart()
+  }
+
+  function loadLocale(raw) {
+    try {
+      var data = JSON.parse(raw || "{}")
+      var code = String(data.system || "").trim()
+      if (code && code !== "auto")
+        root.systemLang = code
+    } catch (e) {
+    }
+  }
+
+  function refreshLocale() {
+    localeProc.running = false
+    localeProc.command = [root.helperPath, "locale"]
+    localeProc.running = true
   }
 
   function helperCommand() {
@@ -860,6 +894,8 @@ Panel {
             foreground: root.fg
             fontFamily: root.fontFamily
             anchors.bottom: parent.bottom
+            enabled: root.canSwap
+            opacity: enabled ? 1 : 0.4
             onClicked: root.swapLanguages()
           }
 
@@ -1427,6 +1463,16 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.loadOcrLangs(String(text || ""))
+    }
+  }
+
+  Process {
+    id: localeProc
+    command: [root.helperPath, "locale"]
+    running: true
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.loadLocale(String(text || ""))
     }
   }
 
