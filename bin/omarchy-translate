@@ -315,6 +315,36 @@ def save_config(cfg: Config) -> None:
     write_private(CONFIG_PATH, body)
 
 
+MAX_HTTP_BODY = 1_048_576
+MAX_HTTP_ERROR_BODY = 4096
+
+
+def _header_length(headers) -> int | None:
+    if headers is None:
+        return None
+    raw = None
+    if hasattr(headers, "get"):
+        raw = headers.get("Content-Length")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def read_limited(stream, limit: int) -> bytes:
+    announced = _header_length(getattr(stream, "headers", None))
+    if announced is not None and announced > limit:
+        raise RuntimeError(f"Translation service response exceeded {limit} bytes")
+    raw = stream.read(limit + 1)
+    if raw is None:
+        return b""
+    if len(raw) > limit:
+        raise RuntimeError(f"Translation service response exceeded {limit} bytes")
+    return raw
+
+
 def http_json(
     url: str,
     *,
@@ -328,9 +358,13 @@ def http_json(
     request = Request(url, data=data, headers=req_headers, method="POST" if data else "GET")
     try:
         with urlopen(request, timeout=timeout) as response:
-            raw = response.read()
+            raw = read_limited(response, MAX_HTTP_BODY)
     except HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:240]
+        try:
+            raw_err = read_limited(exc, MAX_HTTP_ERROR_BODY)
+        except RuntimeError:
+            raw_err = b""
+        detail = raw_err.decode("utf-8", "replace")[:240]
         raise RuntimeError(f"HTTP {exc.code} from translation service: {detail}") from exc
     except URLError as exc:
         raise RuntimeError(f"Could not reach translation service: {exc.reason}") from exc

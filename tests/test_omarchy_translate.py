@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import io
 import os
 import stat
 import sys
@@ -12,6 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "bin" / "omarchy-translate"
@@ -163,6 +165,60 @@ class PrivateFileTests(HelperMixin):
         self.assertEqual(path, Path(self._tmpdir.name) / "omarchy-translate")
         self.assertTrue(path.is_dir())
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
+
+
+class HttpLimitTests(HelperMixin):
+    def test_read_limited_accepts_body_at_cap(self):
+        cap = 16
+        stream = io.BytesIO(b"a" * cap)
+        self.assertEqual(len(self.mod.read_limited(stream, cap)), cap)
+
+    def test_read_limited_rejects_body_over_cap(self):
+        stream = io.BytesIO(b"a" * 32)
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.read_limited(stream, 16)
+        self.assertIn("exceeded 16 bytes", str(ctx.exception))
+
+    def test_read_limited_rejects_content_length_header(self):
+        stream = io.BytesIO(b"ignored")
+        stream.headers = {"Content-Length": "99999"}
+        with self.assertRaises(RuntimeError):
+            self.mod.read_limited(stream, 16)
+
+    def test_http_json_error_does_not_slurp_unbounded_body(self):
+        huge = b"x" * (self.mod.MAX_HTTP_ERROR_BODY + 50_000)
+        err = HTTPError("http://example.test/translate", 500, "boom", hdrs={}, fp=io.BytesIO(huge))
+        try:
+            with patch.object(self.mod, "urlopen", side_effect=err):
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.mod.http_json("http://example.test/translate")
+            self.assertIn("HTTP 500", str(ctx.exception))
+            self.assertLessEqual(len(str(ctx.exception)), 400)
+        finally:
+            err.close()
+
+    def test_http_json_success_over_limit_raises(self):
+        cap = self.mod.MAX_HTTP_BODY
+        body = b"{" + b"a" * (cap + 8) + b"}"
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.headers = {}
+                self._buf = io.BytesIO(payload)
+
+            def read(self, n=-1):
+                return self._buf.read() if n < 0 else self._buf.read(n)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with patch.object(self.mod, "urlopen", return_value=FakeResponse(body)):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.http_json("http://example.test/translate")
+        self.assertIn("exceeded", str(ctx.exception))
 
 
 class StaticReviewTests(unittest.TestCase):
