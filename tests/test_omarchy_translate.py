@@ -319,6 +319,8 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn("Engines", panel)
         self.assertIn("Privacy", panel)
         self.assertIn("helpFlick", panel)
+        self.assertIn("histFlick", panel)
+        self.assertIn("historyMeta", panel)
         self.assertIn("root.sourceText", overlay)
         self.assertIn("root.resultText", overlay)
         self.assertIn("root.definitionText", panel)

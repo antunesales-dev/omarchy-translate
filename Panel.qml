@@ -472,6 +472,37 @@ Panel {
     ])
   }
 
+  function historySnippet(s, n) {
+    var t = String(s || "").replace(/\s+/g, " ").trim()
+    if (t.length <= n) return t
+    return t.slice(0, Math.max(0, n - 1)) + "…"
+  }
+
+  function historyWhen(ts) {
+    var n = Number(ts)
+    if (!n) return ""
+    var sec = Math.max(0, (Date.now() / 1000) - n)
+    if (sec < 45) return "just now"
+    if (sec < 3600) return Math.floor(sec / 60) + "m ago"
+    if (sec < 86400) return Math.floor(sec / 3600) + "h ago"
+    var days = Math.floor(sec / 86400)
+    if (days === 1) return "yesterday"
+    return days + "d ago"
+  }
+
+  function historyMeta(item) {
+    if (!item) return ""
+    var a = String(item.src || "?").slice(0, 8)
+    var b = String(item.target || "?").slice(0, 8)
+    var eng = String(item.engine || "")
+    if (eng === "skip") eng = "skipped"
+    var bits = [a + " → " + b]
+    if (eng) bits.push(eng)
+    var when = root.historyWhen(item.ts)
+    if (when) bits.push(when)
+    return bits.join("  ·  ")
+  }
+
   function restoreHistory(item) {
     if (!item) return
     sourceBox.text = item.source || ""
@@ -1043,41 +1074,133 @@ Panel {
 
         Column {
           width: parent.width
-          spacing: Style.space(4)
+          spacing: Style.space(6)
           visible: root.historyOpen
           height: visible ? implicitHeight : 0
 
           Text {
-            text: root.historyItems.length ? "Recent translations" : "No history yet"
+            width: parent.width
+            text: root.historyItems.length
+              ? ("Log · " + root.historyItems.length + "  ·  click a row to restore  ·  scroll")
+              : "Log is empty"
             textFormat: Text.PlainText
             color: Qt.darker(root.fg, 1.4)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
           }
 
-          Repeater {
-            model: root.historyItems
+          Text {
+            width: parent.width
+            visible: root.historyItems.length === 0
+            height: visible ? implicitHeight : 0
+            text: "Translate something and it lands here. Twenty hops, then the oldest falls off."
+            textFormat: Text.PlainText
+            color: Qt.darker(root.fg, 1.55)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+          }
 
-            MouseArea {
-              required property var modelData
-              width: contentColumn.width
-              height: histLine.implicitHeight + Style.space(8)
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.restoreHistory(modelData)
+          Flickable {
+            id: histFlick
+            width: parent.width
+            visible: root.historyItems.length > 0
+            height: visible ? Style.space(240) : 0
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+            contentWidth: width
+            contentHeight: histCol.implicitHeight
+            interactive: contentHeight > height
 
-              Text {
-                id: histLine
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                text: String(modelData.source || "").replace(/\n/g, " ").slice(0, 48)
-                textFormat: Text.PlainText
-                color: parent.containsMouse ? root.accent : root.fg
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
-                wrapMode: Text.NoWrap
+            WheelHandler {
+              acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+              onWheel: function(event) {
+                var dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 8
+                var maxY = Math.max(0, histFlick.contentHeight - histFlick.height)
+                histFlick.contentY = Math.max(0, Math.min(maxY, histFlick.contentY - dy))
+                event.accepted = true
+              }
+            }
+
+            Column {
+              id: histCol
+              width: histFlick.width
+              spacing: Style.space(2)
+
+              Repeater {
+                model: root.historyItems
+
+                MouseArea {
+                  id: histHit
+                  required property var modelData
+                  width: histCol.width
+                  height: histBlock.implicitHeight + Style.space(10)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.restoreHistory(modelData)
+
+                  Rectangle {
+                    anchors.fill: parent
+                    color: parent.containsMouse ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.08) : "transparent"
+                  }
+
+                  Rectangle {
+                    width: 2
+                    height: parent.height
+                    color: parent.containsMouse ? root.accent : "transparent"
+                  }
+
+                  Column {
+                    id: histBlock
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: Style.space(10)
+                    anchors.rightMargin: Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(2)
+
+                    Text {
+                      width: parent.width
+                      text: root.historyMeta(modelData)
+                      textFormat: Text.PlainText
+                      color: histHit.containsMouse ? root.accent : Qt.darker(root.fg, 1.45)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
+                    Text {
+                      width: parent.width
+                      text: root.historySnippet(modelData.source, 72)
+                      textFormat: Text.PlainText
+                      color: root.fg
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      elide: Text.ElideRight
+                    }
+                    Text {
+                      width: parent.width
+                      text: root.historySnippet(modelData.text, 72)
+                      textFormat: Text.PlainText
+                      color: Qt.darker(root.fg, 1.35)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
+                  }
+                }
+              }
+            }
+
+            ScrollBar.vertical: ScrollBar {
+              policy: histFlick.contentHeight > histFlick.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+              implicitWidth: 8
+              contentItem: Rectangle {
+                implicitWidth: 6
+                radius: 3
+                color: root.accent
+                opacity: 0.7
               }
             }
           }
