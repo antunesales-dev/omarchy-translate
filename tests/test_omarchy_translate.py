@@ -291,6 +291,18 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn('path.indexOf("..")', text)
         self.assertIn("/^[a-z0-9_]+$/", text)
 
+    def test_shell_snippets_do_not_concatenate_user_data(self):
+        panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")
+        overlay = (ROOT / "Overlay.qml").read_text(encoding="utf-8")
+        self.assertIn('printf %s "$1" | wl-copy', panel)
+        self.assertIn('printf %s "$1" | wl-copy', overlay)
+        self.assertNotIn("Util.shellQuote", panel)
+        self.assertNotIn("Util.shellQuote", overlay)
+        self.assertIn('tesseract-data-$1', panel)
+        self.assertNotIn("tesseract-data-\" + code", panel)
+        self.assertIn('wl-paste --no-newline > "$1"', panel)
+        self.assertNotIn("wl-paste --no-newline\" + flag", panel)
+
     def test_manifest_id_is_not_omarchy_reserved(self):
         import json
 

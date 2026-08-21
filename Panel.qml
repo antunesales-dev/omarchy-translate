@@ -189,8 +189,10 @@ Panel {
   }
 
   function pasteCommand(primary) {
-    var flag = primary ? " --primary" : ""
-    return ["bash", "-c", "wl-paste --no-newline" + flag + " > " + root.clipPath]
+    var script = primary
+      ? 'wl-paste --no-newline --primary > "$1"'
+      : 'wl-paste --no-newline > "$1"'
+    return ["bash", "-c", script, "wl-paste", root.clipPath]
   }
 
   function ingestSelection() {
@@ -344,7 +346,9 @@ Panel {
       "-e",
       "bash",
       "-c",
-      "omarchy pkg add tesseract-data-" + code + "; echo; echo Done. Press Enter.; read"
+      'omarchy pkg add "tesseract-data-$1"; echo; echo Done. Press Enter.; read',
+      "omarchy-translate-ocr",
+      String(code)
     ])
   }
 
@@ -377,7 +381,7 @@ Panel {
 
   function copyResultToClipboard() {
     if (!root.resultText) return
-    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(root.resultText) + " | wl-copy"])
+    Quickshell.execDetached(["bash", "-c", 'printf %s "$1" | wl-copy', "wl-copy", root.resultText])
     root.copied = true
     copyFeedback.restart()
   }

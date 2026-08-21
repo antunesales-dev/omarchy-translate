@@ -171,7 +171,7 @@ Item {
             fontFamily: Style.font.menuFamily
             enabled: root.resultText !== ""
             onClicked: {
-              Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(root.resultText) + " | wl-copy"])
+              Quickshell.execDetached(["bash", "-c", 'printf %s "$1" | wl-copy', "wl-copy", root.resultText])
               root.dismiss()
             }
           }
@@ -181,7 +181,7 @@ Item {
             fontFamily: Style.font.menuFamily
             enabled: root.resultText !== ""
             onClicked: {
-              Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(root.resultText) + " | wl-copy"])
+              Quickshell.execDetached(["bash", "-c", 'printf %s "$1" | wl-copy', "wl-copy", root.resultText])
               root.dismiss()
               Quickshell.execDetached([root.pluginDir + "/bin/omarchy-translate-paste"])
             }
