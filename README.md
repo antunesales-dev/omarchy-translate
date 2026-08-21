@@ -37,7 +37,8 @@ In the panel:
 
 - Swap languages **and** text, or pin the current pair.
 - Recent targets appear first (★).
-- Speak original or translation (`espeak-ng`).
+- Speak original or translation with a neural voice (Microsoft Edge,
+  then Google TTS). LibreTranslate stays offline and uses `espeak-ng`.
 - Paste the translation into the focused app.
 - Toggle auto-copy and clipboard watch (dot on the bar icon when the
   clipboard looks like another language).
@@ -125,7 +126,9 @@ Typical Omarchy already has Python 3.11+, `wl-clipboard`, `grim`,
 
 Optional:
 
-- `espeak-ng` — speak original/translation. The speaker button opens a terminal to install it if missing.
+- `espeak-ng` — local fallback when speaking with LibreTranslate, or if
+  neural TTS is unavailable. The speaker button opens a terminal to
+  install it if missing.
 - `docker` — local LibreTranslate
 - `tesseract-data-por` (or other `tesseract-data-*`) for extra OCR languages
 

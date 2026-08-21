@@ -16,41 +16,81 @@ Panel {
   readonly property var languages: [
     { label: "Detect language", value: "auto" },
     { label: "English", value: "en" },
-    { label: "Portuguese", value: "pt" },
+    { label: "Portuguese (Brazil)", value: "pt" },
+    { label: "Portuguese (Portugal)", value: "pt-PT" },
     { label: "Spanish", value: "es" },
     { label: "French", value: "fr" },
     { label: "German", value: "de" },
     { label: "Italian", value: "it" },
-    { label: "Japanese", value: "ja" },
-    { label: "Korean", value: "ko" },
+    { label: "Afrikaans", value: "af" },
+    { label: "Amharic", value: "am" },
+    { label: "Arabic", value: "ar" },
+    { label: "Armenian", value: "hy" },
+    { label: "Azerbaijani", value: "az" },
+    { label: "Basque", value: "eu" },
+    { label: "Bengali", value: "bn" },
+    { label: "Bosnian", value: "bs" },
+    { label: "Bulgarian", value: "bg" },
+    { label: "Burmese", value: "my" },
+    { label: "Catalan", value: "ca" },
     { label: "Chinese (Simplified)", value: "zh-CN" },
     { label: "Chinese (Traditional)", value: "zh-TW" },
-    { label: "Russian", value: "ru" },
-    { label: "Arabic", value: "ar" },
-    { label: "Hindi", value: "hi" },
-    { label: "Dutch", value: "nl" },
-    { label: "Polish", value: "pl" },
-    { label: "Ukrainian", value: "uk" },
-    { label: "Turkish", value: "tr" },
-    { label: "Indonesian", value: "id" },
+    { label: "Croatian", value: "hr" },
     { label: "Czech", value: "cs" },
-    { label: "Greek", value: "el" },
-    { label: "Swedish", value: "sv" },
     { label: "Danish", value: "da" },
-    { label: "Finnish", value: "fi" },
-    { label: "Norwegian", value: "no" },
-    { label: "Hebrew", value: "he" },
-    { label: "Thai", value: "th" },
-    { label: "Vietnamese", value: "vi" },
-    { label: "Romanian", value: "ro" },
-    { label: "Hungarian", value: "hu" },
-    { label: "Catalan", value: "ca" },
-    { label: "Galician", value: "gl" },
-    { label: "Persian", value: "fa" },
-    { label: "Urdu", value: "ur" },
-    { label: "Bengali", value: "bn" },
+    { label: "Dutch", value: "nl" },
+    { label: "Esperanto", value: "eo" },
+    { label: "Estonian", value: "et" },
     { label: "Filipino", value: "fil" },
-    { label: "Malay", value: "ms" }
+    { label: "Finnish", value: "fi" },
+    { label: "Galician", value: "gl" },
+    { label: "Georgian", value: "ka" },
+    { label: "Greek", value: "el" },
+    { label: "Gujarati", value: "gu" },
+    { label: "Hebrew", value: "he" },
+    { label: "Hindi", value: "hi" },
+    { label: "Hungarian", value: "hu" },
+    { label: "Icelandic", value: "is" },
+    { label: "Indonesian", value: "id" },
+    { label: "Irish", value: "ga" },
+    { label: "Japanese", value: "ja" },
+    { label: "Kannada", value: "kn" },
+    { label: "Kazakh", value: "kk" },
+    { label: "Khmer", value: "km" },
+    { label: "Korean", value: "ko" },
+    { label: "Lao", value: "lo" },
+    { label: "Latvian", value: "lv" },
+    { label: "Lithuanian", value: "lt" },
+    { label: "Macedonian", value: "mk" },
+    { label: "Malay", value: "ms" },
+    { label: "Malayalam", value: "ml" },
+    { label: "Marathi", value: "mr" },
+    { label: "Mongolian", value: "mn" },
+    { label: "Nepali", value: "ne" },
+    { label: "Norwegian", value: "no" },
+    { label: "Pashto", value: "ps" },
+    { label: "Persian", value: "fa" },
+    { label: "Polish", value: "pl" },
+    { label: "Punjabi", value: "pa" },
+    { label: "Romanian", value: "ro" },
+    { label: "Russian", value: "ru" },
+    { label: "Serbian", value: "sr" },
+    { label: "Sinhala", value: "si" },
+    { label: "Slovak", value: "sk" },
+    { label: "Slovenian", value: "sl" },
+    { label: "Somali", value: "so" },
+    { label: "Swahili", value: "sw" },
+    { label: "Swedish", value: "sv" },
+    { label: "Tamil", value: "ta" },
+    { label: "Telugu", value: "te" },
+    { label: "Thai", value: "th" },
+    { label: "Turkish", value: "tr" },
+    { label: "Ukrainian", value: "uk" },
+    { label: "Urdu", value: "ur" },
+    { label: "Uzbek", value: "uz" },
+    { label: "Vietnamese", value: "vi" },
+    { label: "Welsh", value: "cy" },
+    { label: "Zulu", value: "zu" }
   ]
 
   readonly property var targetLanguages: {
@@ -86,6 +126,7 @@ Panel {
   property string libretranslateKey: root.setting("libretranslateKey", "")
   property string sourceText: ""
   property string resultText: ""
+  property string resultLang: ""
   property string detectedSrc: ""
   property string errorText: ""
   property string definitionText: ""
@@ -120,7 +161,7 @@ Panel {
     "• Super+Shift+Print OCRs a region (optional bind). The document icon does the same from the panel.",
     "• Super+Shift+Alt+T compact popup (optional bind).",
     "• Drop a .txt or .srt file onto this panel.",
-    "• Speaker icons read original or translation. If espeak-ng is missing, a terminal opens to install it.",
+    "• Speaker icons read original or translation with a neural voice (Microsoft, then Google). LibreTranslate stays local and uses espeak-ng.",
     "• Paste sends the translation into the focused app.",
     "",
     "Engines",
@@ -132,7 +173,7 @@ Panel {
     "Swap languages • pin pair • paste into app • auto-copy • clipboard watch • history • this guide • OCR a region.",
     "",
     "Privacy",
-    "Same-language text is not sent out. URLs, emails, and common API tokens are redacted. Short words can show an English gloss. Cache lasts a week. Default engine leaves your machine; LibreTranslate stays on the URL you set (http/https only).",
+    "Same-language text is not sent out. URLs, emails, and common API tokens are redacted. Short words can show an English gloss. Cache lasts a week. Default engine leaves your machine; speaking uses Microsoft neural voices then Google. LibreTranslate stays on the URL you set (http/https only) and speaks locally.",
     "",
     "Keys in this panel",
     "F1 or Ctrl+/          this guide",
@@ -391,9 +432,11 @@ Panel {
       }
     }
     var text = which === "source" ? sourceBox.text : root.resultText
-    var lang = which === "source" ? (root.detectedSrc || root.sourceLang) : root.targetLang
+    var lang = which === "source"
+      ? (root.detectedSrc || root.sourceLang)
+      : (root.targetLang === "auto" ? (root.resultLang || root.targetLang) : root.targetLang)
     if (!text || !String(text).trim()) return
-    if (lang === "auto") lang = "en"
+    if (!lang || lang === "auto") lang = "en"
     root.speakLang = lang
     root.speakWhich = which
     if (!root.espeakReady) {
@@ -585,7 +628,9 @@ Panel {
     try {
       var payload = JSON.parse(raw)
       resultText = payload.text || ""
-      if (root.sourceLang === "auto") detectedSrc = payload.src || payload.detected || ""
+      root.resultLang = payload.target || root.targetLang
+      if (payload.detected || payload.src)
+        detectedSrc = payload.detected || payload.src
       definitionText = payload.definition || ""
       skipped = payload.skipped === true
       fromCache = payload.cached === true

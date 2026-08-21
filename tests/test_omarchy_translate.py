@@ -56,6 +56,31 @@ class SpeakSplitTests(HelperMixin):
         self.assertIn("Hello there.", parts)
 
 
+class SpeakLangTests(HelperMixin):
+    def test_portuguese_uses_brazilian_neural_not_ukrainian(self):
+        self.assertEqual(self.mod.normalize_lang("pt"), "pt")
+        self.assertEqual(self.mod.normalize_lang("pt-PT"), "pt-PT")
+        self.assertEqual(self.mod.translate_code("pt-PT"), "pt")
+        self.assertEqual(self.mod.edge_voice("pt"), "pt-BR-AntonioNeural")
+        self.assertEqual(self.mod.edge_voice("pt-PT"), "pt-PT-DuarteNeural")
+        self.assertEqual(self.mod.edge_voice("uk"), "uk-UA-OstapNeural")
+        self.assertNotIn("uk", self.mod.edge_voice("pt"))
+        self.assertEqual(self.mod.google_tts_langs("pt")[0], "pt-BR")
+        self.assertEqual(self.mod.espeak_voice("pt"), "pt-br")
+        self.assertEqual(self.mod.espeak_voice("uk"), "uk")
+
+    def test_ssml_escapes_user_text(self):
+        escaped = self.mod.html.escape("hi <script> & 'x'", quote=True)
+        self.assertIn("&lt;script&gt;", escaped)
+        self.assertNotIn("<script>", escaped)
+
+    def test_language_list_covers_major_families(self):
+        codes = {code for code, _ in self.mod.LANGUAGES}
+        for needed in ("pt", "pt-PT", "uk", "ka", "ta", "ko", "ar", "sw", "bn"):
+            self.assertIn(needed, codes)
+        self.assertGreaterEqual(len(codes), 70)
+
+
 class EngineOrderTests(HelperMixin):
     def test_libretranslate_never_includes_google_or_mymemory(self):
         cfg = self.mod.Config(engine="libretranslate", fallback=True)
@@ -339,6 +364,9 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn("How to use", panel)
         self.assertIn("Engines", panel)
         self.assertIn("Privacy", panel)
+        self.assertIn("Portuguese (Brazil)", panel)
+        self.assertIn("pt-PT", panel)
+        self.assertIn("Georgian", panel)
         self.assertIn("helpFlick", panel)
         self.assertIn("Style.space(640)", panel)
         self.assertIn("root.helpOpen ? 640 : 500", panel)

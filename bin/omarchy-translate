@@ -4,19 +4,26 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
+import html
 import json
 import locale
 import os
 import re
+import secrets
 import shutil
 import signal
+import socket
+import ssl
+import struct
 import subprocess
 import sys
 import tempfile
 import textwrap
 import time
 import tomllib
+import uuid
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -59,96 +66,188 @@ SECRET_RE = re.compile(
 )
 HTML_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 LIST_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
-SPEAK_VOICES = {
-    "en": "en",
-    "pt": "pt",
-    "es": "es",
-    "fr": "fr",
-    "de": "de",
-    "it": "it",
-    "nl": "nl",
-    "pl": "pl",
-    "ru": "ru",
-    "uk": "uk",
-    "tr": "tr",
-    "ar": "ar",
-    "hi": "hi",
-    "cs": "cs",
-    "el": "el",
-    "sv": "sv",
-    "da": "da",
-    "fi": "fi",
-    "no": "no",
-    "ro": "ro",
-    "hu": "hu",
-    "ca": "ca",
-    "id": "id",
-    "vi": "vi",
-    "ja": "ja",
-    "ko": "ko",
-    "zh": "zh",
-    "zh-CN": "zh",
-    "zh-TW": "zh",
-}
-
 LANGUAGES: list[tuple[str, str]] = [
     ("auto", "Detect language"),
     ("en", "English"),
-    ("pt", "Portuguese"),
+    ("pt", "Portuguese (Brazil)"),
+    ("pt-PT", "Portuguese (Portugal)"),
     ("es", "Spanish"),
     ("fr", "French"),
     ("de", "German"),
     ("it", "Italian"),
-    ("nl", "Dutch"),
-    ("pl", "Polish"),
-    ("ru", "Russian"),
-    ("uk", "Ukrainian"),
-    ("tr", "Turkish"),
+    ("af", "Afrikaans"),
+    ("am", "Amharic"),
     ("ar", "Arabic"),
-    ("he", "Hebrew"),
-    ("hi", "Hindi"),
-    ("ja", "Japanese"),
-    ("ko", "Korean"),
+    ("hy", "Armenian"),
+    ("az", "Azerbaijani"),
+    ("eu", "Basque"),
+    ("bn", "Bengali"),
+    ("bs", "Bosnian"),
+    ("bg", "Bulgarian"),
+    ("my", "Burmese"),
+    ("ca", "Catalan"),
     ("zh-CN", "Chinese (Simplified)"),
     ("zh-TW", "Chinese (Traditional)"),
-    ("id", "Indonesian"),
-    ("vi", "Vietnamese"),
-    ("th", "Thai"),
-    ("cs", "Czech"),
-    ("el", "Greek"),
-    ("sv", "Swedish"),
-    ("da", "Danish"),
-    ("fi", "Finnish"),
-    ("no", "Norwegian"),
-    ("ro", "Romanian"),
-    ("hu", "Hungarian"),
-    ("bg", "Bulgarian"),
     ("hr", "Croatian"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("nl", "Dutch"),
+    ("eo", "Esperanto"),
+    ("et", "Estonian"),
+    ("fil", "Filipino"),
+    ("fi", "Finnish"),
+    ("gl", "Galician"),
+    ("ka", "Georgian"),
+    ("el", "Greek"),
+    ("gu", "Gujarati"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("hu", "Hungarian"),
+    ("is", "Icelandic"),
+    ("id", "Indonesian"),
+    ("ga", "Irish"),
+    ("ja", "Japanese"),
+    ("kn", "Kannada"),
+    ("kk", "Kazakh"),
+    ("km", "Khmer"),
+    ("ko", "Korean"),
+    ("lo", "Lao"),
+    ("lv", "Latvian"),
+    ("lt", "Lithuanian"),
+    ("mk", "Macedonian"),
+    ("ms", "Malay"),
+    ("ml", "Malayalam"),
+    ("mr", "Marathi"),
+    ("mn", "Mongolian"),
+    ("ne", "Nepali"),
+    ("no", "Norwegian"),
+    ("ps", "Pashto"),
+    ("fa", "Persian"),
+    ("pl", "Polish"),
+    ("pa", "Punjabi"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("sr", "Serbian"),
+    ("si", "Sinhala"),
     ("sk", "Slovak"),
     ("sl", "Slovenian"),
-    ("lt", "Lithuanian"),
-    ("lv", "Latvian"),
-    ("et", "Estonian"),
-    ("ca", "Catalan"),
-    ("gl", "Galician"),
-    ("eu", "Basque"),
-    ("ga", "Irish"),
-    ("cy", "Welsh"),
-    ("is", "Icelandic"),
-    ("fa", "Persian"),
-    ("ur", "Urdu"),
-    ("bn", "Bengali"),
+    ("so", "Somali"),
+    ("sw", "Swahili"),
+    ("sv", "Swedish"),
     ("ta", "Tamil"),
     ("te", "Telugu"),
-    ("ms", "Malay"),
-    ("fil", "Filipino"),
-    ("sw", "Swahili"),
-    ("af", "Afrikaans"),
-    ("eo", "Esperanto"),
+    ("th", "Thai"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("ur", "Urdu"),
+    ("uz", "Uzbek"),
+    ("vi", "Vietnamese"),
+    ("cy", "Welsh"),
+    ("zu", "Zulu"),
 ]
 
 LANG_NAME = {code: name for code, name in LANGUAGES}
 TARGET_LANGUAGES = [(code, name) for code, name in LANGUAGES if code != "auto"]
+
+# Microsoft Edge Read Aloud neural voices. Names are allowlisted; never
+# interpolated from UI strings into SSML.
+EDGE_VOICES = {
+    "af": "af-ZA-WillemNeural",
+    "am": "am-ET-AmehaNeural",
+    "ar": "ar-SA-HamedNeural",
+    "az": "az-AZ-BabekNeural",
+    "bg": "bg-BG-BorislavNeural",
+    "bn": "bn-IN-BashkarNeural",
+    "bs": "bs-BA-GoranNeural",
+    "ca": "ca-ES-EnricNeural",
+    "cs": "cs-CZ-AntoninNeural",
+    "cy": "cy-GB-AledNeural",
+    "da": "da-DK-JeppeNeural",
+    "de": "de-DE-ConradNeural",
+    "el": "el-GR-NestorasNeural",
+    "en": "en-US-AndrewNeural",
+    "es": "es-ES-AlvaroNeural",
+    "et": "et-EE-KertNeural",
+    "eu": "eu-ES-AnderNeural",
+    "fa": "fa-IR-FaridNeural",
+    "fi": "fi-FI-HarriNeural",
+    "fil": "fil-PH-AngeloNeural",
+    "fr": "fr-FR-HenriNeural",
+    "ga": "ga-IE-ColmNeural",
+    "gl": "gl-ES-RoiNeural",
+    "gu": "gu-IN-NiranjanNeural",
+    "he": "he-IL-AvriNeural",
+    "hi": "hi-IN-MadhurNeural",
+    "hr": "hr-HR-SreckoNeural",
+    "hu": "hu-HU-TamasNeural",
+    "hy": "hy-AM-HaykNeural",
+    "id": "id-ID-ArdiNeural",
+    "is": "is-IS-GunnarNeural",
+    "it": "it-IT-DiegoNeural",
+    "ja": "ja-JP-KeitaNeural",
+    "ka": "ka-GE-GiorgiNeural",
+    "kk": "kk-KZ-DauletNeural",
+    "km": "km-KH-PisethNeural",
+    "kn": "kn-IN-GaganNeural",
+    "ko": "ko-KR-InJoonNeural",
+    "lo": "lo-LA-ChanthavongNeural",
+    "lt": "lt-LT-LeonasNeural",
+    "lv": "lv-LV-NilsNeural",
+    "mk": "mk-MK-AleksandarNeural",
+    "ml": "ml-IN-MidhunNeural",
+    "mn": "mn-MN-BataaNeural",
+    "mr": "mr-IN-ManoharNeural",
+    "ms": "ms-MY-OsmanNeural",
+    "my": "my-MM-ThihaNeural",
+    "ne": "ne-NP-SagarNeural",
+    "nl": "nl-NL-MaartenNeural",
+    "no": "nb-NO-FinnNeural",
+    "pa": "pa-IN-OjasNeural",
+    "pl": "pl-PL-MarekNeural",
+    "ps": "ps-AF-GulNawazNeural",
+    "pt": "pt-BR-AntonioNeural",
+    "pt-PT": "pt-PT-DuarteNeural",
+    "ro": "ro-RO-EmilNeural",
+    "ru": "ru-RU-DmitryNeural",
+    "si": "si-LK-SameeraNeural",
+    "sk": "sk-SK-LukasNeural",
+    "sl": "sl-SI-RokNeural",
+    "so": "so-SO-MuuseNeural",
+    "sr": "sr-RS-NicholasNeural",
+    "sv": "sv-SE-MattiasNeural",
+    "sw": "sw-KE-ChilembaNeural",
+    "ta": "ta-IN-ValluvarNeural",
+    "te": "te-IN-MohanNeural",
+    "th": "th-TH-NiwatNeural",
+    "tr": "tr-TR-AhmetNeural",
+    "uk": "uk-UA-OstapNeural",
+    "ur": "ur-PK-AsadNeural",
+    "uz": "uz-UZ-SardorNeural",
+    "vi": "vi-VN-NamMinhNeural",
+    "zh-CN": "zh-CN-YunxiNeural",
+    "zh-TW": "zh-TW-YunJheNeural",
+    "zu": "zu-ZA-ThembaNeural",
+}
+
+ESPEAK_VOICES = {
+    "en": "en-us",
+    "pt": "pt-br",
+    "pt-PT": "pt",
+    "es": "es",
+    "fr": "fr-fr",
+    "de": "de",
+    "it": "it",
+    "zh-CN": "cmn",
+    "zh-TW": "cmn",
+    "fil": "id",
+    "no": "nb",
+    "he": "he",
+    "uk": "uk",
+}
+
+EDGE_TTS_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
+EDGE_CHROMIUM = "143.0.3650.75"
+EDGE_VOICE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)+$")
 
 
 @dataclass
@@ -210,8 +309,49 @@ def normalize_lang(code: str) -> str:
             return "zh-TW"
         return "zh-CN"
     if lang == "pt":
+        if region == "PT":
+            return "pt-PT"
         return "pt"
     return lang
+
+
+def translate_code(code: str) -> str:
+    """Language code the translation engines actually accept."""
+    n = normalize_lang(code)
+    if n in {"pt", "pt-PT", "pt-BR"}:
+        return "pt"
+    return n
+
+
+def edge_voice(lang: str) -> str | None:
+    n = normalize_lang(lang)
+    voice = EDGE_VOICES.get(n) or EDGE_VOICES.get(n.split("-")[0] if n else "")
+    if not voice or not EDGE_VOICE_RE.fullmatch(voice):
+        return None
+    return voice
+
+
+def google_tts_langs(lang: str) -> list[str]:
+    n = normalize_lang(lang)
+    aliases = {
+        "pt": ["pt-BR", "pt"],
+        "pt-PT": ["pt-PT", "pt"],
+        "zh-CN": ["zh-CN", "zh"],
+        "zh-TW": ["zh-TW"],
+        "fil": ["fil", "tl"],
+        "he": ["he", "iw"],
+        "jv": ["jv", "jw"],
+        "no": ["no", "nb"],
+    }
+    return aliases.get(n, [n])
+
+
+def espeak_voice(lang: str) -> str:
+    n = normalize_lang(lang)
+    if n in ESPEAK_VOICES:
+        return ESPEAK_VOICES[n]
+    base = n.split("-")[0]
+    return ESPEAK_VOICES.get(base, base or "en-us")
 
 
 def system_language() -> str:
@@ -439,8 +579,8 @@ def translate_google(text: str, source: str, target: str) -> Translation:
     params = urlencode(
         {
             "client": "gtx",
-            "sl": source,
-            "tl": target,
+            "sl": "auto" if source == "auto" else translate_code(source),
+            "tl": translate_code(target),
             "dt": "t",
             "dj": "1",
             "q": text,
@@ -464,7 +604,7 @@ def translate_google(text: str, source: str, target: str) -> Translation:
 
 
 def translate_mymemory(text: str, source: str, target: str) -> Translation:
-    pair = f"{'Autodetect' if source == 'auto' else source}|{target}"
+    pair = f"{'Autodetect' if source == 'auto' else translate_code(source)}|{translate_code(target)}"
     params = urlencode({"q": text, "langpair": pair})
     payload = http_json(f"https://api.mymemory.translated.net/get?{params}")
     if not isinstance(payload, dict):
@@ -493,8 +633,8 @@ def translate_libretranslate(
     base = validate_libretranslate_url(cfg.libretranslate_url or "")
     body: dict[str, str] = {
         "q": text,
-        "source": "auto" if source == "auto" else source,
-        "target": target,
+        "source": "auto" if source == "auto" else translate_code(source),
+        "target": translate_code(target),
         "format": "html" if html else "text",
     }
     if cfg.libretranslate_api_key:
@@ -818,7 +958,7 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
     else:
         detected = src
 
-    if detected and detected == dst:
+    if detected and translate_code(detected) == translate_code(dst):
         result = Translation(
             text=cleaned,
             source=src,
@@ -955,22 +1095,183 @@ def split_utterances(text: str, limit: int = 180) -> list[str]:
 
 
 def _google_tts_mp3(text: str, lang: str) -> bytes | None:
-    tl = normalize_lang(lang) or "en"
-    if tl.startswith("zh") and tl != "zh-TW":
-        tl = "zh-CN"
-    params = urlencode({"ie": "UTF-8", "client": "tw-ob", "tl": tl, "q": text})
-    url = f"https://translate.google.com/translate_tts?{params}"
-    request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "audio/mpeg"})
+    for tl in google_tts_langs(lang):
+        params = urlencode({"ie": "UTF-8", "client": "tw-ob", "tl": tl, "q": text})
+        url = f"https://translate.google.com/translate_tts?{params}"
+        request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "audio/mpeg"})
+        try:
+            with _OPENER.open(request, timeout=15) as response:
+                raw = read_limited(response, MAX_HTTP_BODY)
+        except (HTTPError, URLError, RuntimeError, OSError):
+            continue
+        if len(raw) < 800:
+            continue
+        if raw.lstrip()[:1] in (b"<", b"{") or raw[:15].lower().startswith(b"<!doctype"):
+            continue
+        return raw
+    return None
+
+
+def _sec_ms_gec() -> str:
+    ticks = time.time() + 11_644_473_600
+    ticks -= ticks % 300
+    ticks *= 1e9 / 100
+    return hashlib.sha256(f"{ticks:.0f}{EDGE_TTS_TOKEN}".encode("ascii")).hexdigest().upper()
+
+
+def _ws_send(sock: ssl.SSLSocket, data: bytes | str, opcode: int = 1) -> None:
+    payload = data if isinstance(data, bytes) else data.encode("utf-8")
+    mask = os.urandom(4)
+    header = bytearray([0x80 | opcode])
+    n = len(payload)
+    if n < 126:
+        header.append(0x80 | n)
+    elif n < 65536:
+        header.append(0x80 | 126)
+        header.extend(struct.pack(">H", n))
+    else:
+        header.append(0x80 | 127)
+        header.extend(struct.pack(">Q", n))
+    header.extend(mask)
+    sock.sendall(header + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+
+def _ws_recv(sock: ssl.SSLSocket) -> tuple[int, bytes]:
+    def recvn(n: int) -> bytes:
+        out = b""
+        while len(out) < n:
+            chunk = sock.recv(n - len(out))
+            if not chunk:
+                raise EOFError("websocket closed")
+            out += chunk
+        return out
+
+    b1, b2 = recvn(2)
+    opcode = b1 & 0x0F
+    length = b2 & 0x7F
+    if length == 126:
+        length = struct.unpack(">H", recvn(2))[0]
+    elif length == 127:
+        length = struct.unpack(">Q", recvn(8))[0]
+    if b2 & 0x80:
+        mask = recvn(4)
+        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(recvn(length)))
+    else:
+        payload = recvn(length)
+    return opcode, payload
+
+
+def _edge_tts_mp3(text: str, lang: str) -> bytes | None:
+    voice = edge_voice(lang)
+    if not voice:
+        return None
+    locale = "-".join(voice.split("-")[:2])
+    body = html.escape(text[:1500], quote=True)
+    host = "speech.platform.bing.com"
+    conn_id = uuid.uuid4().hex
+    path = (
+        "/consumer/speech/synthesize/readaloud/edge/v1"
+        f"?TrustedClientToken={EDGE_TTS_TOKEN}"
+        f"&ConnectionId={conn_id}"
+        f"&Sec-MS-GEC={_sec_ms_gec()}"
+        f"&Sec-MS-GEC-Version=1-{EDGE_CHROMIUM}"
+    )
+    ua = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
+    )
+    key = base64_ws_key()
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}\r\n"
+        "Pragma: no-cache\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "Origin: chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold\r\n"
+        f"User-Agent: {ua}\r\n"
+        "Accept-Language: en-US,en;q=0.9\r\n"
+        f"Cookie: muid={secrets.token_hex(16).upper()};\r\n"
+        "\r\n"
+    )
+    sock: ssl.SSLSocket | None = None
     try:
-        with _OPENER.open(request, timeout=15) as response:
-            raw = read_limited(response, MAX_HTTP_BODY)
-    except (HTTPError, URLError, RuntimeError, OSError):
+        raw_sock = socket.create_connection((host, 443), timeout=20)
+        sock = ssl.create_default_context().wrap_socket(raw_sock, server_hostname=host)
+        sock.settimeout(20)
+        sock.sendall(request.encode("ascii"))
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                return None
+            buf += chunk
+            if len(buf) > 8192:
+                return None
+        status = buf.split(b"\r\n", 1)[0]
+        if b" 101 " not in status:
+            return None
+        ts = int(time.time() * 1e9)
+        _ws_send(
+            sock,
+            f"X-Timestamp:{ts}\r\n"
+            "Content-Type:application/json; charset=utf-8\r\n"
+            "Path:speech.config\r\n\r\n"
+            '{"context":{"synthesis":{"audio":{"metadataoptions":'
+            '{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},'
+            '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n',
+        )
+        _ws_send(
+            sock,
+            f"X-RequestId:{uuid.uuid4().hex}\r\n"
+            "Content-Type:application/ssml+xml\r\n"
+            f"X-Timestamp:{ts}Z\r\n"
+            "Path:ssml\r\n\r\n"
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' "
+            f"xml:lang='{locale}'><voice name='{voice}'>{body}</voice></speak>",
+        )
+        audio = b""
+        for _ in range(80):
+            opcode, payload = _ws_recv(sock)
+            if opcode == 0x8:
+                break
+            if opcode == 0x9:
+                _ws_send(sock, payload, opcode=0xA)
+                continue
+            if opcode == 1:
+                if b"Path:turn.end" in payload:
+                    break
+                continue
+            if opcode != 2 or len(payload) < 2:
+                continue
+            hlen = int.from_bytes(payload[:2], "big")
+            if hlen < 0 or 2 + hlen > len(payload):
+                continue
+            header = payload[2 : 2 + hlen].decode("utf-8", "replace")
+            chunk = payload[2 + hlen :]
+            if "Path:audio" in header and "metadata" not in header.lower():
+                audio += chunk
+                if len(audio) > MAX_HTTP_BODY:
+                    return None
+        if len(audio) < 800:
+            return None
+        if audio.startswith(b"ID3") or (audio[0] == 0xFF and (audio[1] & 0xE0) == 0xE0):
+            return audio
         return None
-    if len(raw) < 800:
+    except (OSError, EOFError, TimeoutError, ssl.SSLError, struct.error, ValueError):
         return None
-    if raw.lstrip()[:1] in (b"<", b"{") or raw[:15].lower().startswith(b"<!doctype"):
-        return None
-    return raw
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
+def base64_ws_key() -> str:
+    return base64.b64encode(os.urandom(16)).decode("ascii")
 
 
 def _write_tts_file(chunks: list[bytes], dest: Path) -> bool:
@@ -1022,9 +1323,16 @@ def _play_exec(path: Path) -> None:
 def speak_text(text: str, lang: str, *, allow_network: bool = True) -> None:
     signal.signal(signal.SIGTERM, lambda *_: (_kill_player(), sys.exit(0)))
     signal.signal(signal.SIGINT, lambda *_: (_kill_player(), sys.exit(0)))
-    uttered = split_utterances(text[:1500], 180)
+    clipped = text[:1500]
+    uttered = split_utterances(clipped, 180)
     dest = runtime_dir() / "speak.mp3"
-    if allow_network and uttered and (have("ffplay") or have("mpv")):
+    can_play = have("ffplay") or have("mpv")
+    if allow_network and can_play:
+        edge = _edge_tts_mp3(clipped, lang)
+        if edge:
+            dest.write_bytes(edge)
+            os.chmod(dest, 0o600)
+            _play_exec(dest)
         blobs: list[bytes] = []
         for piece in uttered:
             blob = _google_tts_mp3(piece, lang)
@@ -1037,14 +1345,10 @@ def speak_text(text: str, lang: str, *, allow_network: bool = True) -> None:
     if not have("espeak-ng") and not have("espeak"):
         fail("missing-espeak", 2)
     bin_name = "espeak-ng" if have("espeak-ng") else "espeak"
-    voice = SPEAK_VOICES.get(normalize_lang(lang), SPEAK_VOICES.get(normalize_lang(lang).split("-")[0], "en"))
-    if voice == "en":
-        voice = "en-us"
-    if voice == "pt":
-        voice = "pt-br"
+    voice = espeak_voice(lang)
     os.execvp(
         bin_name,
-        [bin_name, "-v", str(voice), "-s", "128", "-p", "42", "-g", "8", "-k", "3", "-a", "160", "--", text[:1500]],
+        [bin_name, "-v", str(voice), "-s", "128", "-p", "42", "-g", "8", "-k", "3", "-a", "160", "--", clipped],
     )
 
 
