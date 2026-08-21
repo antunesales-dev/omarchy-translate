@@ -248,9 +248,8 @@ Panel {
       root.outPath
     ]
     if (root.engine === "libretranslate") {
-      cmd[2] = "exec \"$1\" --json --engine \"$2\" --from \"$3\" --to \"$4\" --file \"$5\" --libretranslate-url \"$7\" --libretranslate-key \"$8\" > \"$6\""
+      cmd[2] = "exec \"$1\" --json --engine \"$2\" --from \"$3\" --to \"$4\" --file \"$5\" --no-fallback --libretranslate-url \"$7\" > \"$6\""
       cmd.push(root.libretranslateUrl)
-      cmd.push(root.libretranslateKey)
     }
     return cmd
   }
@@ -283,6 +282,9 @@ Panel {
     }
     if (!root.translateQueued) return
     root.translateQueued = false
+    translator.environment = {
+      "OMARCHY_TRANSLATE_LT_KEY": root.engine === "libretranslate" ? String(root.libretranslateKey || "") : ""
+    }
     translator.command = root.helperCommand()
     translator.running = true
   }

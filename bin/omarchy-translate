@@ -514,12 +514,15 @@ def translate_preserving(cfg: Config, engine: str, text: str, source: str, targe
 
 
 def engine_order(cfg: Config) -> list[str]:
-    order = [cfg.engine]
-    if not cfg.fallback:
+    engine = cfg.engine if cfg.engine in ENGINES else "google"
+    order = [engine]
+    # LibreTranslate is an explicit on-machine choice. Never send that
+    # text to Google or MyMemory if the instance is down.
+    if not cfg.fallback or engine == "libretranslate":
         return order
-    for engine in ENGINES:
-        if engine not in order:
-            order.append(engine)
+    for other in ENGINES:
+        if other not in order:
+            order.append(other)
     return order
 
 
@@ -1215,7 +1218,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--engine", choices=ENGINES, help="Override the configured engine")
     parser.add_argument("--grab", choices=GRAB_MODES, help="Where to read text from")
     parser.add_argument("--libretranslate-url", help="LibreTranslate base URL")
-    parser.add_argument("--libretranslate-key", help="LibreTranslate API key")
+    parser.add_argument(
+        "--libretranslate-key",
+        help="Deprecated: appears in process lists. Set OMARCHY_TRANSLATE_LT_KEY instead.",
+    )
     parser.add_argument("--json", action="store_true", help="Print a JSON result and exit")
     parser.add_argument("--copy", action="store_true", help="Copy the translation to the clipboard")
     parser.add_argument("--no-fallback", action="store_true", help="Do not try other engines if the first fails")
@@ -1249,7 +1255,10 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         cfg.fallback = False
     if args.libretranslate_url:
         cfg.libretranslate_url = args.libretranslate_url
-    if args.libretranslate_key is not None and args.libretranslate_key != "":
+    env_key = os.environ.get("OMARCHY_TRANSLATE_LT_KEY", "")
+    if env_key:
+        cfg.libretranslate_api_key = env_key
+    elif args.libretranslate_key:
         cfg.libretranslate_api_key = args.libretranslate_key
     return cfg
 

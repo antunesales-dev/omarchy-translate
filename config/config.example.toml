@@ -18,6 +18,8 @@ grab = "clipboard"
 # Copy the translation as soon as it arrives
 copy_result = false
 
-# Used only when engine = "libretranslate"
+# Used only when engine = "libretranslate".
+# LibreTranslate never falls back to Google or MyMemory.
+# Prefer OMARCHY_TRANSLATE_LT_KEY over putting a key on the command line.
 libretranslate_url = "http://127.0.0.1:5000"
 libretranslate_api_key = ""

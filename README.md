@@ -90,8 +90,12 @@ document icon in the toolbar installs Portuguese OCR data
 
 ## Engines
 
-If the chosen engine fails, the helper tries the others unless you pass
-`--no-fallback`.
+If Google or MyMemory fails, the helper tries the other remote engine
+unless you pass `--no-fallback`. **LibreTranslate never falls back** to
+Google or MyMemory — a down local instance is an error, not a leak.
+
+The LibreTranslate API key is passed in `OMARCHY_TRANSLATE_LT_KEY`, not
+on the process command line.
 
 | Engine | What it is | Off-machine |
 |---|---|---|
@@ -99,13 +103,14 @@ If the chosen engine fails, the helper tries the others unless you pass
 | **mymemory** | Free Translated.net API, ~5k chars/day | Yes |
 | **libretranslate** | Open-source Argos Translate | Only if the URL is remote |
 
-Local LibreTranslate (Docker):
+Local LibreTranslate (Docker), pinned to v1.9.6 by image digest:
 
 ```sh
 bin/omarchy-translate-setup-lt
 ```
 
-Then set Engine to LibreTranslate in the panel.
+Then set Engine to LibreTranslate in the panel. That setup script does
+not follow `libretranslate/libretranslate:latest`.
 
 Lists, blank-line paragraphs, and simple HTML tags are preserved when
 translating.
