@@ -3,7 +3,9 @@
 set -euo pipefail
 
 PLUGIN_ID="io.github.antunesales-dev.translate"
-CLIP="/tmp/omarchy-translate-clip.txt"
+RUNTIME="${XDG_RUNTIME_DIR:-${HOME:-/tmp}/.cache}/omarchy-translate"
+mkdir -p -m 700 "$RUNTIME"
+CLIP="$RUNTIME/clip.txt"
 
 cleanup_freeze() {
   [[ -n ${PID:-} ]] && kill "$PID" 2>/dev/null || true

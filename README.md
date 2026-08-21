@@ -135,9 +135,17 @@ bin/omarchy-translate history
 ## Privacy
 
 Runs unsandboxed inside `omarchy-shell`. Default engine sends text to
-Google over HTTPS. Use local LibreTranslate to keep text on-machine.
-Clipboard watch, when enabled, inspects new clipboard text to detect
-language.
+Google over HTTPS. Use local LibreTranslate to keep text on-machine —
+detection and translation both stay on that instance, with no Google or
+MyMemory fallback. Scratch files go under `$XDG_RUNTIME_DIR/omarchy-translate`
+(mode 0700), not world-readable `/tmp`. Clipboard watch, when enabled,
+inspects new clipboard text to detect language.
+
+## Tests
+
+```sh
+python3 -m unittest discover -s tests -v
+```
 
 ## Remove
 

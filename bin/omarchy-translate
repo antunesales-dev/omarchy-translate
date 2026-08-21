@@ -263,8 +263,44 @@ def toml_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def ensure_config_dir() -> Path:
+    CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(CONFIG_DIR, 0o700)
+    except OSError:
+        pass
+    return CONFIG_DIR
+
+
+def runtime_dir() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    path = Path(base) / "omarchy-translate" if base else Path.home() / ".cache" / "omarchy-translate"
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+    return path
+
+
+def write_private(path: Path, text: str) -> None:
+    ensure_config_dir()
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def save_config(cfg: Config) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     body = (
         "# omarchy-translate preferences\n"
         "# target = auto uses the system language from LANG/LC_MESSAGES.\n"
@@ -276,17 +312,7 @@ def save_config(cfg: Config) -> None:
         f'libretranslate_url = "{toml_escape(cfg.libretranslate_url)}"\n'
         f'libretranslate_api_key = "{toml_escape(cfg.libretranslate_api_key)}"\n'
     )
-    fd, tmp_name = tempfile.mkstemp(prefix="config.", suffix=".toml", dir=CONFIG_DIR)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(body)
-        os.replace(tmp_name, CONFIG_PATH)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    write_private(CONFIG_PATH, body)
 
 
 def http_json(
@@ -436,8 +462,7 @@ def history_add(source: str, result: Translation) -> None:
         "ts": int(time.time()),
     }
     items = [entry] + [item for item in history_list() if item.get("source") != entry["source"]]
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    HISTORY_PATH.write_text(json.dumps(items[:HISTORY_MAX], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_private(HISTORY_PATH, json.dumps(items[:HISTORY_MAX], ensure_ascii=False, indent=2) + "\n")
 
 
 def history_clear() -> None:
@@ -622,8 +647,7 @@ def cache_put(key: str, result: Translation) -> None:
         oldest = sorted(data.items(), key=lambda kv: kv[1].get("ts", 0))[: len(data) - CACHE_MAX]
         for old_key, _ in oldest:
             data.pop(old_key, None)
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    write_private(CACHE_PATH, json.dumps(data, ensure_ascii=False))
 
 
 def is_word_query(text: str) -> bool:
@@ -756,10 +780,36 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
     return result
 
 
+def detect_libretranslate(cfg: Config, text: str) -> str:
+    base = (cfg.libretranslate_url or "").rstrip("/")
+    if not base:
+        raise RuntimeError("Set libretranslate_url in preferences first")
+    body: dict[str, str] = {"q": text}
+    if cfg.libretranslate_api_key:
+        body["api_key"] = cfg.libretranslate_api_key
+    payload = http_json(
+        f"{base}/detect",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        return normalize_lang(str(payload[0].get("language") or ""))
+    if isinstance(payload, dict):
+        return normalize_lang(str(payload.get("language") or ""))
+    return ""
+
+
 def detect_language(cfg: Config, text: str) -> str:
     snippet = text.strip()[:500]
     if not snippet:
         return ""
+    # LibreTranslate is an on-machine choice. Do not probe Google/MyMemory
+    # just to guess the source language.
+    if cfg.engine == "libretranslate":
+        try:
+            return detect_libretranslate(cfg, snippet)
+        except RuntimeError:
+            return ""
     try:
         result = translate_google(snippet, "auto", cfg.resolved_target())
         return result.detected
@@ -1207,8 +1257,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("prefs", "init", "history", "detect", "speak", "setup-lt", "ocr-langs"),
-        help="prefs, init, history, detect, speak, setup-lt, or ocr-langs",
+        choices=("prefs", "init", "history", "detect", "speak", "setup-lt", "ocr-langs", "ensure-dir"),
+        help="prefs, init, history, detect, speak, setup-lt, ocr-langs, or ensure-dir",
     )
     parser.add_argument("--text", help="Translate this text instead of the clipboard")
     parser.add_argument("--file", help="Read text to translate from a file")
@@ -1274,6 +1324,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         save_config(cfg)
         print(CONFIG_PATH)
+        return 0
+
+    if args.command == "ensure-dir":
+        print(runtime_dir())
+        ensure_config_dir()
         return 0
 
     if args.command == "history" or args.history_clear:

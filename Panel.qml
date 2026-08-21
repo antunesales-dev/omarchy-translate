@@ -106,9 +106,15 @@ Panel {
 
   readonly property int boxHeight: Style.space(200)
   readonly property int scrollGutter: 12
-  readonly property string clipPath: "/tmp/omarchy-translate-clip.txt"
-  readonly property string inPath: "/tmp/omarchy-translate-in.txt"
-  readonly property string outPath: "/tmp/omarchy-translate-out.json"
+  readonly property string runtimeDir: {
+    var dir = Quickshell.env("XDG_RUNTIME_DIR")
+    if (!dir)
+      dir = (Quickshell.env("HOME") || "/tmp") + "/.cache"
+    return dir + "/omarchy-translate"
+  }
+  readonly property string clipPath: root.runtimeDir + "/clip.txt"
+  readonly property string inPath: root.runtimeDir + "/in.txt"
+  readonly property string outPath: root.runtimeDir + "/out.json"
   readonly property string pluginDir: {
     var url = Qt.resolvedUrl(".").toString()
     if (url.indexOf("file://") === 0) url = url.substring(7)
@@ -926,6 +932,12 @@ Panel {
     printErrors: false
     onLoaded: root.loadHistory(text())
     onFileChanged: reload()
+  }
+
+  Process {
+    id: prepareDir
+    command: [root.helperPath, "ensure-dir"]
+    running: true
   }
 
   Process {
