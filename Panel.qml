@@ -896,14 +896,27 @@ Panel {
           Repeater {
             model: root.historyItems
 
-            Button {
+            MouseArea {
               required property var modelData
               width: contentColumn.width
-              text: String(modelData.source || "").replace(/[<>]/g, "").replace(/\n/g, " ").slice(0, 48)
-              tooltipText: String(modelData.text || "").replace(/[<>]/g, "").slice(0, 200)
-              foreground: root.fg
-              fontFamily: root.fontFamily
+              height: histLine.implicitHeight + Style.space(8)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
               onClicked: root.restoreHistory(modelData)
+
+              Text {
+                id: histLine
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: String(modelData.source || "").replace(/\n/g, " ").slice(0, 48)
+                textFormat: Text.PlainText
+                color: parent.containsMouse ? root.accent : root.fg
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+                wrapMode: Text.NoWrap
+              }
             }
           }
         }

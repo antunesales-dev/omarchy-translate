@@ -310,11 +310,34 @@ class StaticReviewTests(unittest.TestCase):
             self.assertGreater(opens, 0, name)
             self.assertEqual(opens, plains, f"{name}: every Text must set Text.PlainText")
         panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")
-        self.assertIn("textFormat: TextEdit.PlainText", panel)
         overlay = (ROOT / "Overlay.qml").read_text(encoding="utf-8")
+        self.assertIn("textFormat: TextEdit.PlainText", panel)
         self.assertIn("root.sourceText", overlay)
         self.assertIn("root.resultText", overlay)
         self.assertIn("root.definitionText", panel)
+
+    def test_untrusted_copy_is_not_fed_to_kit_buttons_or_tooltips(self):
+        """qs.Ui Button/ToolTip use Text without PlainText. Don't hand them
+        clipboard or endpoint strings."""
+        for name in ("Overlay.qml", "Panel.qml", "BarWidget.qml"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            for prop in ("tooltipText:",):
+                for i, line in enumerate(text.splitlines()):
+                    if prop not in line:
+                        continue
+                    self.assertNotRegex(
+                        line,
+                        r"modelData|resultText|sourceText|definitionText|errorText|detectedSrc",
+                        f"{name}:{i+1} {prop} carries untrusted copy",
+                    )
+            self.assertNotRegex(
+                text,
+                r"Button\s*\{[^}]*text:\s*String\(modelData",
+                f"{name}: history/user string on qs.Ui Button",
+            )
+        panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")
+        self.assertIn("histLine", panel)
+        self.assertNotIn("tooltipText: String(modelData", panel)
 
     def test_shell_snippets_do_not_concatenate_user_data(self):
         panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")
