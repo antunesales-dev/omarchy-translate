@@ -44,8 +44,9 @@ In the panel:
 - History of the last 20 translations.
 - Long text scrolls (wheel, scrollbar, Page Up/Down).
 
-Shortcuts: `Ctrl+Shift+C` copy, `Ctrl+Shift+V` paste-back, `Ctrl+Enter`
-re-run, `Ctrl+Shift+L` clear, Escape close.
+Shortcuts (press **F1** or **?** in the panel): `Ctrl+Shift+C` copy,
+`Ctrl+Shift+V` paste-back, `Ctrl+Enter` re-run, `Ctrl+Shift+L` clear,
+`Ctrl+Shift+H` history, Escape close.
 
 Optional keybinds: copy
 [`extras/bindings.lua.example`](extras/bindings.lua.example) into

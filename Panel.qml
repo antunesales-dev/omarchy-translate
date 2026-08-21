@@ -101,8 +101,26 @@ Panel {
   property bool pairPinned: root.setting("pairPinned", false) === true || root.setting("pairPinned", false) === "true"
   property bool watchClipboard: root.setting("watchClipboard", false) === true || root.setting("watchClipboard", false) === "true"
   property bool historyOpen: false
+  property bool helpOpen: false
   property var recentTargets: []
   property var historyItems: []
+  readonly property string helpText: [
+    "In this panel",
+    "F1 or Ctrl+/          this help",
+    "Esc                   close",
+    "Ctrl+Enter            translate",
+    "Ctrl+Shift+C          copy translation",
+    "Ctrl+Shift+V          paste into the app",
+    "Ctrl+Shift+L          clear",
+    "Ctrl+Shift+H          history",
+    "Drop a .txt / .srt    translate a file",
+    "",
+    "On the desktop (if you added extras/bindings.lua)",
+    "Super+Shift+T         copy selection and open",
+    "Super+Shift+Print     OCR a region",
+    "Super+Shift+Alt+T     compact popup",
+    "Click the bar icon    open / close"
+  ].join("\n")
 
   readonly property int boxHeight: Style.space(200)
   readonly property int scrollGutter: 12
@@ -135,6 +153,11 @@ Panel {
   readonly property color selectionTint: Style.selectionFillFor(fg, accent)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property int charCount: String(sourceBox.text || "").length
+
+  onOpenedChanged: {
+    if (root.opened)
+      root.refreshHistory()
+  }
 
   onSettingsChanged: {
     sourceLang = root.setting("sourceLang", "auto")
@@ -337,6 +360,50 @@ Panel {
     }
   }
 
+  function refreshHistory() {
+    historyProc.running = false
+    historyProc.command = [root.helperPath, "history"]
+    historyProc.running = true
+  }
+
+  function handleKeys(event) {
+    var ctrl = event.modifiers & Qt.ControlModifier
+    var shift = event.modifiers & Qt.ShiftModifier
+    if (event.key === Qt.Key_F1 || (ctrl && !shift && event.key === Qt.Key_Slash)) {
+      root.helpOpen = !root.helpOpen
+      event.accepted = true
+      return true
+    }
+    if (event.key === Qt.Key_C && ctrl && shift) {
+      root.copyResultToClipboard()
+      event.accepted = true
+      return true
+    }
+    if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && ctrl) {
+      root.translate()
+      event.accepted = true
+      return true
+    }
+    if (event.key === Qt.Key_L && ctrl && shift) {
+      root.clearAll()
+      event.accepted = true
+      return true
+    }
+    if (event.key === Qt.Key_V && ctrl && shift) {
+      root.pasteBack()
+      event.accepted = true
+      return true
+    }
+    if (event.key === Qt.Key_H && ctrl && shift) {
+      root.historyOpen = !root.historyOpen
+      if (root.historyOpen)
+        root.refreshHistory()
+      event.accepted = true
+      return true
+    }
+    return false
+  }
+
   function loadDroppedFile(url) {
     var path = String(url || "")
     if (path.indexOf("file://") === 0) {
@@ -488,6 +555,8 @@ Panel {
         readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : (hover.hovered ? "hover-cursor" : "normal"), root.fg, root.accent)
 
         Keys.onPressed: function(event) {
+          if (root.handleKeys(event))
+            return
           if (event.key === Qt.Key_PageDown) {
             field.scrollBy(flick.height * 0.85)
             event.accepted = true
@@ -561,31 +630,25 @@ Panel {
           event.accepted = true
           return
         }
-        if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier)) {
-          root.copyResultToClipboard()
-          event.accepted = true
-          return
-        }
-        if (event.key === Qt.Key_Return && (event.modifiers & Qt.ControlModifier)) {
-          root.translate()
-          event.accepted = true
-          return
-        }
-        if (event.key === Qt.Key_L && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier)) {
-          root.clearAll()
-          event.accepted = true
-          return
-        }
-        if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier)) {
-          root.pasteBack()
-          event.accepted = true
-        }
+        root.handleKeys(event)
       }
 
       Column {
         id: contentColumn
         width: parent.width
         spacing: Style.space(10)
+
+        Text {
+          width: parent.width
+          visible: root.helpOpen
+          height: visible ? implicitHeight : 0
+          text: root.helpText
+          textFormat: Text.PlainText
+          color: root.fg
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.Wrap
+        }
 
         Row {
           width: parent.width
@@ -723,10 +786,23 @@ Panel {
             width: Style.space(28)
             iconText: "󰋚"
             iconSize: Style.font.body
-            tooltipText: "History"
+            tooltipText: "History (Ctrl+Shift+H)"
             foreground: root.historyOpen ? root.accent : root.fg
             fontFamily: root.fontFamily
-            onClicked: root.historyOpen = !root.historyOpen
+            onClicked: {
+              root.historyOpen = !root.historyOpen
+              if (root.historyOpen)
+                root.refreshHistory()
+            }
+          }
+          Button {
+            width: Style.space(28)
+            iconText: "?"
+            iconSize: Style.font.body
+            tooltipText: "Shortcuts (F1)"
+            foreground: root.helpOpen ? root.accent : root.fg
+            fontFamily: root.fontFamily
+            onClicked: root.helpOpen = !root.helpOpen
           }
           Button {
             width: Style.space(28)
@@ -1006,6 +1082,14 @@ Panel {
     printErrors: false
     onLoaded: root.loadHistory(text())
     onFileChanged: reload()
+  }
+
+  Process {
+    id: historyProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.loadHistory(String(text || ""))
+    }
   }
 
   Process {
