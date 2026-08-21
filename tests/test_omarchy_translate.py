@@ -345,7 +345,8 @@ class StaticReviewTests(unittest.TestCase):
                 f"{name}: history/user string on qs.Ui Button",
             )
         panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")
-        self.assertIn("histLine", panel)
+        self.assertIn("histFlick", panel)
+        self.assertIn("histBlock", panel)
         self.assertNotIn("tooltipText: String(modelData", panel)
 
     def test_shell_snippets_do_not_concatenate_user_data(self):
