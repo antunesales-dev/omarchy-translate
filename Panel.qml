@@ -163,6 +163,7 @@ Panel {
   readonly property string keyPath: root.runtimeDir + "/lt.key"
   readonly property int maxTextChars: 100000
   property bool copyQueued: false
+  property bool restoring: false
   readonly property string pluginDir: {
     var url = Qt.resolvedUrl(".").toString()
     if (url.indexOf("file://") === 0) url = url.substring(7)
@@ -527,11 +528,24 @@ Panel {
 
   function restoreHistory(item) {
     if (!item) return
+    root.restoring = true
+    var src = String(item.src || "")
+    var dst = String(item.target || "")
+    if (src && src !== "auto") {
+      root.sourceLang = src
+      sourceDropdown.value = src
+    }
+    if (dst) {
+      root.targetLang = dst
+      targetDropdown.value = dst
+    }
     sourceBox.text = item.source || ""
     root.resultText = item.text || ""
     sourceBox.resetScroll()
     resultBox.resetScroll()
     root.historyOpen = false
+    root.helpOpen = false
+    Qt.callLater(function() { root.restoring = false })
   }
 
   function onTranslation(raw) {
@@ -735,7 +749,7 @@ Panel {
           id: workTop
           width: parent.width
           spacing: Style.space(10)
-          visible: !root.helpOpen
+          visible: !root.helpOpen && !root.historyOpen
           height: visible ? implicitHeight : 0
 
         Row {
@@ -949,7 +963,7 @@ Panel {
           id: workBottom
           width: parent.width
           spacing: Style.space(10)
-          visible: !root.helpOpen
+          visible: !root.helpOpen && !root.historyOpen
           height: visible ? implicitHeight : 0
 
         Item {
@@ -989,7 +1003,7 @@ Panel {
           placeholder: "Select text and press the keybind, or type here…"
           onTextChanged: {
             root.sourceText = text
-            if (!root.ingesting) debounce.restart()
+            if (!root.ingesting && !root.restoring) debounce.restart()
           }
         }
 
@@ -1094,6 +1108,8 @@ Panel {
           }
         }
 
+        }
+
         Column {
           width: parent.width
           spacing: Style.space(6)
@@ -1128,7 +1144,7 @@ Panel {
             id: histFlick
             width: parent.width
             visible: root.historyItems.length > 0
-            height: visible ? Style.space(240) : 0
+            height: visible ? Style.space(520) : 0
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             flickableDirection: Flickable.VerticalFlick
@@ -1226,7 +1242,6 @@ Panel {
               }
             }
           }
-        }
         }
       }
     }
