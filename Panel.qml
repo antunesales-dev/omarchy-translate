@@ -308,9 +308,9 @@ Panel {
 
   function pasteCommand(primary) {
     var script = primary
-      ? 'wl-paste --no-newline --primary > "$1"'
-      : 'wl-paste --no-newline > "$1"'
-    return ["bash", "-c", script, "wl-paste", root.clipPath]
+      ? 'wl-paste --no-newline --primary | head -c "$2" > "$1"'
+      : 'wl-paste --no-newline | head -c "$2" > "$1"'
+    return ["bash", "-c", script, "wl-paste", root.clipPath, "400000"]
   }
 
   function ingestSelection() {

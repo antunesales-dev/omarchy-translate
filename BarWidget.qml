@@ -9,6 +9,8 @@ BarWidget {
 
   property bool foreignHint: false
   readonly property bool watchClipboard: setting("watchClipboard", false) === true || setting("watchClipboard", false) === "true"
+  readonly property string engine: String(setting("engine", "google") || "google")
+  readonly property string libretranslateUrl: String(setting("libretranslateUrl", "http://127.0.0.1:5000") || "http://127.0.0.1:5000")
   readonly property string pluginDir: {
     var url = Qt.resolvedUrl(".").toString()
     if (url.indexOf("file://") === 0) url = url.substring(7)
@@ -47,11 +49,24 @@ BarWidget {
     panelLoader.item.hostWidget = root
   }
 
+  function injectOverlay() {
+    if (!overlayLoader.item) return
+    overlayLoader.item.shell = root.bar && root.bar.shell ? root.bar.shell : null
+    overlayLoader.item.manifest = { id: root.moduleName }
+    overlayLoader.item.settings = root.settings
+  }
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  onBarChanged: injectPanel()
-  onSettingsChanged: injectPanel()
+  onBarChanged: {
+    injectPanel()
+    injectOverlay()
+  }
+  onSettingsChanged: {
+    injectPanel()
+    injectOverlay()
+  }
 
   Loader {
     id: panelLoader
@@ -69,11 +84,7 @@ BarWidget {
     active: true
     source: Qt.resolvedUrl("Overlay.qml")
     visible: false
-    onLoaded: {
-      if (!overlayLoader.item) return
-      overlayLoader.item.shell = root.bar && root.bar.shell ? root.bar.shell : null
-      overlayLoader.item.manifest = { id: root.moduleName }
-    }
+    onLoaded: root.injectOverlay()
   }
 
   IpcHandler {
@@ -120,7 +131,15 @@ BarWidget {
 
   Process {
     id: detectProc
-    command: [root.pluginDir + "/bin/omarchy-translate", "detect", "--json"]
+    command: {
+      var cmd = [root.pluginDir + "/bin/omarchy-translate", "detect", "--json", "--engine", root.engine]
+      if (root.engine === "libretranslate") {
+        cmd.push("--no-fallback")
+        cmd.push("--libretranslate-url")
+        cmd.push(root.libretranslateUrl)
+      }
+      return cmd
+    }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

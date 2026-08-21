@@ -355,6 +355,86 @@ class OcrLangsTests(HelperMixin):
         self.assertTrue(por["installed"])
 
 
+class BoundAndEscapeTests(HelperMixin):
+    def test_websocket_frame_over_cap_is_rejected(self):
+        self.assertEqual(self.mod._ws_frame_length(16), 16)
+        with self.assertRaises(ValueError):
+            self.mod._ws_frame_length(self.mod.MAX_HTTP_BODY + 1)
+
+    def test_ffmpeg_concat_escapes_quotes_in_paths(self):
+        line = self.mod._ffmpeg_concat_line(Path("/tmp/omarchy-translate/it''s.mp3"))
+        self.assertTrue(line.startswith("file '"))
+        self.assertIn("'\\''", line)
+        self.assertNotIn("file '/tmp/omarchy-translate/it''s.mp3'", line)
+
+    def test_wl_paste_does_not_keep_a_clipboard_bomb(self):
+        huge = "a" * (self.mod.MAX_TEXT_BYTES + 80)
+
+        class FakeStdout:
+            def __init__(self, data):
+                self._data = data
+
+            def read(self, n=-1):
+                if n < 0:
+                    out, self._data = self._data, ""
+                    return out
+                out, self._data = self._data[:n], self._data[n:]
+                return out
+
+        class FakeProc:
+            def __init__(self):
+                self.stdout = FakeStdout(huge)
+
+            def kill(self):
+                return None
+
+            def wait(self, timeout=None):
+                return 0
+
+        with (
+            patch.object(self.mod, "have", return_value=True),
+            patch("subprocess.Popen", return_value=FakeProc()),
+        ):
+            out = self.mod.wl_paste("clipboard")
+        self.assertEqual(len(out), self.mod.MAX_TEXT_BYTES)
+
+    def test_edge_voice_rejects_injected_ssml_name(self):
+        self.assertIsNone(self.mod.edge_voice("pt\"/><break>"))
+        self.assertEqual(self.mod.edge_voice("pt"), "pt-BR-AntonioNeural")
+
+
+class FeaturePathTests(HelperMixin):
+    def test_copy_reads_regular_file_and_not_symlink(self):
+        path = Path(self._tmpdir.name) / "copy.txt"
+        path.write_text("olá", encoding="utf-8")
+        self.assertEqual(self.mod.read_input_file(path), "olá")
+        link = Path(self._tmpdir.name) / "copy.link"
+        link.symlink_to(path)
+        with self.assertRaises(RuntimeError):
+            self.mod.read_input_file(link)
+
+    def test_history_roundtrip_is_private_and_capped(self):
+        result = self.mod.Translation(text="hi", source="en", target="pt", engine="google", detected="en")
+        self.mod.history_add("hello", result)
+        items = self.mod.history_list()
+        self.assertEqual(items[0]["source"], "hello")
+        self.assertEqual(items[0]["text"], "hi")
+        mode = stat.S_IMODE(self.mod.HISTORY_PATH.stat().st_mode)
+        self.assertEqual(mode, 0o600)
+
+    def test_skip_still_keeps_original_text(self):
+        cfg = self.mod.Config(engine="google", source="auto", target="pt")
+        with (
+            patch.object(self.mod, "detect_language", return_value="pt"),
+            patch.object(self.mod, "translate_google") as google,
+            patch.object(self.mod, "history_add"),
+        ):
+            result = self.mod.translate_text(cfg, "Olá amigo")
+        self.assertTrue(result.skipped)
+        self.assertEqual(result.text, "Olá amigo")
+        google.assert_not_called()
+
+
 class StaticReviewTests(unittest.TestCase):
     def test_panel_does_not_put_api_key_on_argv(self):
         text = (ROOT / "Panel.qml").read_text(encoding="utf-8")
@@ -457,10 +537,22 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn("ocrPorReady", panel)
         self.assertIn("omarchy-translate-ocr", panel)
         self.assertIn("OCR a region", panel)
-        self.assertIn('wl-paste --no-newline > "$1"', panel)
+        self.assertIn('head -c "$2"', panel)
+        self.assertNotIn('wl-paste --no-newline > "$1"', panel)
         self.assertNotIn("wl-paste --no-newline\" + flag", panel)
         self.assertIn("File is too large", panel)
         self.assertIn("Clipboard is too large", overlay)
+        overlay = (ROOT / "Overlay.qml").read_text(encoding="utf-8")
+        bar = (ROOT / "BarWidget.qml").read_text(encoding="utf-8")
+        self.assertIn("--engine", overlay)
+        self.assertIn("--no-fallback", overlay)
+        self.assertIn('head -c "$1"', overlay)
+        self.assertIn('"detect", "--json", "--engine"', bar)
+        self.assertIn("--no-fallback", bar)
+        helperSrc = (ROOT / "bin" / "omarchy-translate").read_text(encoding="utf-8")
+        self.assertIn("allow_network=cfg.engine != \"libretranslate\"", helperSrc)
+        self.assertIn("_ws_frame_length", helperSrc)
+        self.assertIn("_ffmpeg_concat_line", helperSrc)
 
     def test_manifest_id_is_not_omarchy_reserved(self):
         import json

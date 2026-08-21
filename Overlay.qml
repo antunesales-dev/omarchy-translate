@@ -11,6 +11,7 @@ Item {
 
   property var shell: null
   property var manifest: null
+  property var settings: ({})
   property bool opened: false
   property string sourceText: ""
   property string resultText: ""
@@ -66,6 +67,25 @@ Item {
     else root.open("{}")
   }
 
+  function helperCommand() {
+    var engine = String((root.settings && root.settings.engine) || "google")
+    var cmd = [
+      "bash", "-c",
+      "exec \"$1\" --json --engine \"$2\" --file \"$3\" > \"$4\"",
+      "omarchy-translate",
+      root.helperPath,
+      engine,
+      root.inPath,
+      root.outPath
+    ]
+    if (engine === "libretranslate") {
+      var url = String((root.settings && root.settings.libretranslateUrl) || "http://127.0.0.1:5000")
+      cmd[2] = "exec \"$1\" --json --engine \"$2\" --file \"$3\" --no-fallback --libretranslate-url \"$5\" > \"$4\""
+      cmd.push(url)
+    }
+    return cmd
+  }
+
   function copyResultToClipboard() {
     if (!root.resultText) return
     root.copyQueued = true
@@ -87,14 +107,7 @@ Item {
     root.busy = true
     inFile.setText(cleaned + "\n")
     Qt.callLater(function() {
-      helper.command = [
-        "bash", "-c",
-        "exec \"$1\" --json --file \"$2\" > \"$3\"",
-        "omarchy-translate",
-        root.helperPath,
-        root.inPath,
-        root.outPath
-      ]
+      helper.command = root.helperCommand()
       helper.running = true
     })
   }
@@ -273,7 +286,7 @@ Item {
 
   Process {
     id: pasteProc
-    command: ["wl-paste", "--no-newline"]
+    command: ["bash", "-c", 'wl-paste --no-newline | head -c "$1"', "wl-paste", "400000"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.translateClipboard(String(text || ""))

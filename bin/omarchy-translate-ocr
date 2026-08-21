@@ -31,5 +31,6 @@ TEXT=$(printf '%s' "$TEXT" | sed 's/[[:space:]]*$//')
 
 printf '%s' "$TEXT" | wl-copy
 printf '%s' "$TEXT" >"$CLIP"
+chmod 600 "$CLIP"
 omarchy-notification-send -g 󰗊 "OCR text copied — translating"
 omarchy-shell shell summon "$PLUGIN_ID" '{}'
