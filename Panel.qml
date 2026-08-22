@@ -628,14 +628,23 @@ Panel {
   function captureOcr() {
     root.close()
     var extra = root.ocrWanted
-    if (!/^[a-z0-9_]+$/.test(extra))
+    if (!/^[a-z0-9_]+$/.test(extra) || !root.knownTessCode(extra))
       extra = "eng"
     Quickshell.execDetached([root.pluginDir + "/bin/omarchy-translate-ocr", extra])
   }
 
+  function knownTessCode(code) {
+    var c = String(code || "")
+    if (c === "eng") return true
+    for (var k in root.ocrTess)
+      if (root.ocrTess[k] === c) return true
+    return false
+  }
+
   function installOcrLang(code) {
-    if (!/^[a-z0-9_]+$/.test(String(code || ""))) return
-    if (root.ocrInstalled.indexOf(String(code)) !== -1) {
+    var c = String(code || "")
+    if (!/^[a-z0-9_]+$/.test(c) || !root.knownTessCode(c)) return
+    if (root.ocrInstalled.indexOf(c) !== -1) {
       root.captureOcr()
       return
     }
@@ -646,7 +655,7 @@ Panel {
       "-c",
       'omarchy pkg add "tesseract-data-$1"; echo; echo Done. Press Enter.; read',
       "omarchy-translate-ocr",
-      String(code)
+      c
     ])
   }
 
@@ -1080,9 +1089,7 @@ Panel {
             width: Style.space(28)
             iconText: "󰺯"
             iconSize: Style.font.body
-            tooltipText: root.ocrWantedReady
-              ? "OCR a region"
-              : ("Install " + (root.languageLabel(root.resolvedSourceLang || root.sourceLang) || "") + " OCR language").replace("  ", " ")
+            tooltipText: root.ocrWantedReady ? "OCR a region" : "Install OCR language for From"
             foreground: root.ocrWantedReady ? root.accent : root.fg
             fontFamily: root.fontFamily
             onClicked: {

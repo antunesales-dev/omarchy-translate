@@ -21,21 +21,25 @@ SELECTION=$(slurp 2>/dev/null) || exit 0
 ALLOW="eng por spa fra deu ita nld pol rus ukr tur ara heb hin jpn kor chi_sim chi_tra ind vie tha ces ell swe dan fin nor ron hun bul hrv slk slv lit lav est cat glg eus gle cym isl fas urd ben tam tel msa tgl swa afr"
 installed="$(tesseract --list-langs 2>/dev/null || true)"
 want="${1:-}"
-if [[ -n $want && ! $want =~ ^[a-z0-9_]+$ ]]; then
-  want=""
+allowed=0
+if [[ $want =~ ^[a-z0-9_]+$ ]]; then
+  for code in $ALLOW; do
+    if [[ $code == "$want" ]]; then
+      allowed=1
+      break
+    fi
+  done
 fi
-OCR_LANGS="${OMARCHY_OCR_LANGS:-}"
-if [[ -z $OCR_LANGS ]]; then
-  OCR_LANGS="eng"
-  if [[ -n $want && $want != eng ]] && printf '%s\n' "$installed" | grep -qx "$want"; then
-    OCR_LANGS="eng+$want"
-  else
-    for code in $ALLOW; do
-      [[ $code == eng ]] && continue
-      printf '%s\n' "$installed" | grep -qx "$code" || continue
-      OCR_LANGS="$OCR_LANGS+$code"
-    done
-  fi
+[[ $allowed -eq 1 ]] || want=""
+OCR_LANGS="eng"
+if [[ -n $want && $want != eng ]] && printf '%s\n' "$installed" | grep -Fqx -- "$want"; then
+  OCR_LANGS="eng+$want"
+else
+  for code in $ALLOW; do
+    [[ $code == eng ]] && continue
+    printf '%s\n' "$installed" | grep -Fqx -- "$code" || continue
+    OCR_LANGS="$OCR_LANGS+$code"
+  done
 fi
 TEXT=$(grim -g "$SELECTION" - | tesseract stdin stdout --oem 1 --psm 6 -l "$OCR_LANGS" --dpi 300 -c preserve_interword_spaces=1 2>/dev/null) || exit 1
 TEXT=$(printf '%s' "$TEXT" | sed 's/[[:space:]]*$//')

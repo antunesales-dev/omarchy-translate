@@ -546,7 +546,7 @@ class StaticReviewTests(unittest.TestCase):
                         continue
                     self.assertNotRegex(
                         line,
-                        r"modelData|resultText|sourceText|definitionText|errorText|detectedSrc",
+                        r"modelData|resultText|sourceText|definitionText|errorText|detectedSrc|languageLabel|resolvedSourceLang",
                         f"{name}:{i+1} {prop} carries untrusted copy",
                     )
             self.assertNotRegex(
@@ -580,9 +580,13 @@ class StaticReviewTests(unittest.TestCase):
         self.assertNotIn('root.installOcrLang("por")', panel)
         self.assertIn("omarchy-translate-ocr", panel)
         self.assertIn("OCR a region", panel)
+        self.assertIn("Install OCR language for From", panel)
+        self.assertIn("knownTessCode", panel)
         ocr = (ROOT / "bin" / "omarchy-translate-ocr").read_text(encoding="utf-8")
         self.assertIn("spa", ocr)
         self.assertIn("jpn", ocr)
+        self.assertIn("grep -Fqx", ocr)
+        self.assertNotIn("${OMARCHY_OCR_LANGS:-}", ocr)
         self.assertIn('head -c "$2"', panel)
         self.assertNotIn('wl-paste --no-newline > "$1"', panel)
         self.assertNotIn("wl-paste --no-newline\" + flag", panel)
