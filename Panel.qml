@@ -163,6 +163,31 @@ Panel {
   property bool espeakReady: false
   property bool ocrPorReady: false
   property var ocrInstalled: []
+  readonly property var ocrTess: ({
+    "en": "eng", "pt": "por", "pt-PT": "por", "es": "spa", "fr": "fra",
+    "de": "deu", "it": "ita", "nl": "nld", "pl": "pol", "ru": "rus",
+    "uk": "ukr", "tr": "tur", "ar": "ara", "he": "heb", "hi": "hin",
+    "ja": "jpn", "ko": "kor", "zh-CN": "chi_sim", "zh-TW": "chi_tra",
+    "id": "ind", "vi": "vie", "th": "tha", "cs": "ces", "el": "ell",
+    "sv": "swe", "da": "dan", "fi": "fin", "no": "nor", "ro": "ron",
+    "hu": "hun", "bg": "bul", "hr": "hrv", "sk": "slk", "sl": "slv",
+    "ca": "cat", "gl": "glg", "eu": "eus", "ga": "gle", "cy": "cym",
+    "fa": "fas", "ur": "urd", "bn": "ben", "ta": "tam", "te": "tel",
+    "ms": "msa", "fil": "tgl", "sw": "swa", "af": "afr"
+  })
+  readonly property string ocrWanted: {
+    var code = root.ocrTessCode(root.resolvedSourceLang || root.sourceLang)
+    if (code)
+      return code
+    return root.ocrTessCode(root.resolvedTargetLang)
+  }
+  readonly property bool ocrWantedReady: {
+    if (root.ocrInstalled.length === 0)
+      return false
+    if (!root.ocrWanted)
+      return true
+    return root.ocrInstalled.indexOf(root.ocrWanted) !== -1
+  }
   property bool pairPinned: root.setting("pairPinned", false) === true || root.setting("pairPinned", false) === "true"
   property bool watchClipboard: root.setting("watchClipboard", false) === true || root.setting("watchClipboard", false) === "true"
   property bool historyOpen: false
@@ -548,6 +573,14 @@ Panel {
     return false
   }
 
+  function ocrTessCode(lang) {
+    var c = String(lang || "")
+    if (root.ocrTess[c])
+      return root.ocrTess[c]
+    var base = c.split("-")[0]
+    return root.ocrTess[base] || ""
+  }
+
   function languageLabel(code) {
     var c = String(code || "")
     if (!c || c === "auto") return ""
@@ -594,7 +627,10 @@ Panel {
 
   function captureOcr() {
     root.close()
-    Quickshell.execDetached([root.pluginDir + "/bin/omarchy-translate-ocr"])
+    var extra = root.ocrWanted
+    if (!/^[a-z0-9_]+$/.test(extra))
+      extra = "eng"
+    Quickshell.execDetached([root.pluginDir + "/bin/omarchy-translate-ocr", extra])
   }
 
   function installOcrLang(code) {
@@ -1044,14 +1080,16 @@ Panel {
             width: Style.space(28)
             iconText: "󰺯"
             iconSize: Style.font.body
-            tooltipText: root.ocrPorReady ? "OCR a region" : "Install Portuguese OCR language"
-            foreground: root.ocrPorReady ? root.accent : root.fg
+            tooltipText: root.ocrWantedReady
+              ? "OCR a region"
+              : ("Install " + (root.languageLabel(root.resolvedSourceLang || root.sourceLang) || "") + " OCR language").replace("  ", " ")
+            foreground: root.ocrWantedReady ? root.accent : root.fg
             fontFamily: root.fontFamily
             onClicked: {
-              if (root.ocrPorReady)
+              if (root.ocrWantedReady)
                 root.captureOcr()
-              else
-                root.installOcrLang("por")
+              else if (root.ocrWanted)
+                root.installOcrLang(root.ocrWanted)
             }
           }
         }

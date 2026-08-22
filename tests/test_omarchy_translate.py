@@ -385,6 +385,11 @@ class OcrLangsTests(HelperMixin):
         self.assertEqual(data["installed"], ["eng", "por"])
         por = next(item for item in data["available"] if item["code"] == "por")
         self.assertTrue(por["installed"])
+        self.assertEqual(self.mod.tess_code("pt"), "por")
+        self.assertEqual(self.mod.tess_code("es"), "spa")
+        self.assertEqual(self.mod.tess_code("ja"), "jpn")
+        self.assertEqual(self.mod.tess_code("zh-CN"), "chi_sim")
+        self.assertIn("spa", {item["code"] for item in data["available"]})
 
 
 class BoundAndEscapeTests(HelperMixin):
@@ -570,8 +575,14 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn('"ocr-langs"', panel)
         self.assertIn('"locale"', panel)
         self.assertIn("ocrPorReady", panel)
+        self.assertIn("ocrWanted", panel)
+        self.assertIn("ocrTessCode", panel)
+        self.assertNotIn('root.installOcrLang("por")', panel)
         self.assertIn("omarchy-translate-ocr", panel)
         self.assertIn("OCR a region", panel)
+        ocr = (ROOT / "bin" / "omarchy-translate-ocr").read_text(encoding="utf-8")
+        self.assertIn("spa", ocr)
+        self.assertIn("jpn", ocr)
         self.assertIn('head -c "$2"', panel)
         self.assertNotIn('wl-paste --no-newline > "$1"', panel)
         self.assertNotIn("wl-paste --no-newline\" + flag", panel)

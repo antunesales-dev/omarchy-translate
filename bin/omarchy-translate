@@ -946,6 +946,67 @@ def fetch_definition(word: str) -> str:
     return f"{part}: {text}" if part else text
 
 
+TESSERACT_LANGS = {
+    "en": "eng",
+    "pt": "por",
+    "pt-PT": "por",
+    "es": "spa",
+    "fr": "fra",
+    "de": "deu",
+    "it": "ita",
+    "nl": "nld",
+    "pl": "pol",
+    "ru": "rus",
+    "uk": "ukr",
+    "tr": "tur",
+    "ar": "ara",
+    "he": "heb",
+    "hi": "hin",
+    "ja": "jpn",
+    "ko": "kor",
+    "zh-CN": "chi_sim",
+    "zh-TW": "chi_tra",
+    "id": "ind",
+    "vi": "vie",
+    "th": "tha",
+    "cs": "ces",
+    "el": "ell",
+    "sv": "swe",
+    "da": "dan",
+    "fi": "fin",
+    "no": "nor",
+    "ro": "ron",
+    "hu": "hun",
+    "bg": "bul",
+    "hr": "hrv",
+    "sk": "slk",
+    "sl": "slv",
+    "lt": "lit",
+    "lv": "lav",
+    "et": "est",
+    "ca": "cat",
+    "gl": "glg",
+    "eu": "eus",
+    "ga": "gle",
+    "cy": "cym",
+    "is": "isl",
+    "fa": "fas",
+    "ur": "urd",
+    "bn": "ben",
+    "ta": "tam",
+    "te": "tel",
+    "ms": "msa",
+    "fil": "tgl",
+    "sw": "swa",
+    "af": "afr",
+}
+
+
+def tess_code(lang: str) -> str:
+    n = normalize_lang(lang)
+    return TESSERACT_LANGS.get(n) or TESSERACT_LANGS.get(n.split("-")[0] if n else "", "")
+
+
 def list_ocr_langs() -> dict:
     installed: list[str] = []
     if have("tesseract"):
@@ -955,19 +1016,37 @@ def list_ocr_langs() -> dict:
             if code and code not in {"List of available languages in", "osd"} and not code.endswith(":"):
                 if "/" not in code:
                     installed.append(code)
-    common = [
-        ("eng", "English"),
-        ("por", "Portuguese"),
-        ("spa", "Spanish"),
-        ("fra", "French"),
-        ("deu", "German"),
-        ("ita", "Italian"),
-        ("jpn", "Japanese"),
-        ("chi_sim", "Chinese Simplified"),
-    ]
+    names = {
+        "eng": "English",
+        "por": "Portuguese",
+        "spa": "Spanish",
+        "fra": "French",
+        "deu": "German",
+        "ita": "Italian",
+        "jpn": "Japanese",
+        "chi_sim": "Chinese Simplified",
+        "chi_tra": "Chinese Traditional",
+        "rus": "Russian",
+        "ara": "Arabic",
+        "kor": "Korean",
+        "nld": "Dutch",
+        "pol": "Polish",
+        "ukr": "Ukrainian",
+        "tur": "Turkish",
+        "hin": "Hindi",
+        "tgl": "Filipino",
+    }
+    seen: list[str] = []
+    available = []
+    for code in TESSERACT_LANGS.values():
+        if code in seen:
+            continue
+        seen.append(code)
+        available.append({"code": code, "name": names.get(code, code), "installed": code in installed})
     return {
         "installed": installed,
-        "available": [{"code": code, "name": name, "installed": code in installed} for code, name in common],
+        "available": available,
+        "map": dict(TESSERACT_LANGS),
     }
 
 
