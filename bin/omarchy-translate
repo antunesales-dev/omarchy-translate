@@ -4,26 +4,19 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
-import html
 import json
 import locale
 import os
 import re
-import secrets
 import shutil
 import signal
-import socket
-import ssl
-import struct
 import subprocess
 import sys
 import tempfile
 import textwrap
 import time
 import tomllib
-import uuid
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -149,86 +142,6 @@ LANGUAGES: list[tuple[str, str]] = [
 LANG_NAME = {code: name for code, name in LANGUAGES}
 TARGET_LANGUAGES = [(code, name) for code, name in LANGUAGES if code != "auto"]
 
-# Microsoft Edge Read Aloud neural voices. Names are allowlisted; never
-# interpolated from UI strings into SSML.
-EDGE_VOICES = {
-    "af": "af-ZA-WillemNeural",
-    "am": "am-ET-AmehaNeural",
-    "ar": "ar-SA-HamedNeural",
-    "az": "az-AZ-BabekNeural",
-    "bg": "bg-BG-BorislavNeural",
-    "bn": "bn-IN-BashkarNeural",
-    "bs": "bs-BA-GoranNeural",
-    "ca": "ca-ES-EnricNeural",
-    "cs": "cs-CZ-AntoninNeural",
-    "cy": "cy-GB-AledNeural",
-    "da": "da-DK-JeppeNeural",
-    "de": "de-DE-ConradNeural",
-    "el": "el-GR-NestorasNeural",
-    "en": "en-US-AndrewNeural",
-    "es": "es-ES-AlvaroNeural",
-    "et": "et-EE-KertNeural",
-    "eu": "eu-ES-AnderNeural",
-    "fa": "fa-IR-FaridNeural",
-    "fi": "fi-FI-HarriNeural",
-    "fil": "fil-PH-AngeloNeural",
-    "fr": "fr-FR-HenriNeural",
-    "ga": "ga-IE-ColmNeural",
-    "gl": "gl-ES-RoiNeural",
-    "gu": "gu-IN-NiranjanNeural",
-    "he": "he-IL-AvriNeural",
-    "hi": "hi-IN-MadhurNeural",
-    "hr": "hr-HR-SreckoNeural",
-    "hu": "hu-HU-TamasNeural",
-    "hy": "hy-AM-HaykNeural",
-    "id": "id-ID-ArdiNeural",
-    "is": "is-IS-GunnarNeural",
-    "it": "it-IT-DiegoNeural",
-    "ja": "ja-JP-KeitaNeural",
-    "ka": "ka-GE-GiorgiNeural",
-    "kk": "kk-KZ-DauletNeural",
-    "km": "km-KH-PisethNeural",
-    "kn": "kn-IN-GaganNeural",
-    "ko": "ko-KR-InJoonNeural",
-    "lo": "lo-LA-ChanthavongNeural",
-    "lt": "lt-LT-LeonasNeural",
-    "lv": "lv-LV-NilsNeural",
-    "mk": "mk-MK-AleksandarNeural",
-    "ml": "ml-IN-MidhunNeural",
-    "mn": "mn-MN-BataaNeural",
-    "mr": "mr-IN-ManoharNeural",
-    "ms": "ms-MY-OsmanNeural",
-    "my": "my-MM-ThihaNeural",
-    "ne": "ne-NP-SagarNeural",
-    "nl": "nl-NL-MaartenNeural",
-    "no": "nb-NO-FinnNeural",
-    "pa": "pa-IN-OjasNeural",
-    "pl": "pl-PL-MarekNeural",
-    "ps": "ps-AF-GulNawazNeural",
-    "pt": "pt-BR-AntonioNeural",
-    "pt-PT": "pt-PT-DuarteNeural",
-    "ro": "ro-RO-EmilNeural",
-    "ru": "ru-RU-DmitryNeural",
-    "si": "si-LK-SameeraNeural",
-    "sk": "sk-SK-LukasNeural",
-    "sl": "sl-SI-RokNeural",
-    "so": "so-SO-MuuseNeural",
-    "sr": "sr-RS-NicholasNeural",
-    "sv": "sv-SE-MattiasNeural",
-    "sw": "sw-KE-ChilembaNeural",
-    "ta": "ta-IN-ValluvarNeural",
-    "te": "te-IN-MohanNeural",
-    "th": "th-TH-NiwatNeural",
-    "tr": "tr-TR-AhmetNeural",
-    "uk": "uk-UA-OstapNeural",
-    "ur": "ur-PK-AsadNeural",
-    "uz": "uz-UZ-SardorNeural",
-    "vi": "vi-VN-NamMinhNeural",
-    "zh-CN": "zh-CN-YunxiNeural",
-    "zh-TW": "zh-TW-YunJheNeural",
-    "zu": "zu-ZA-ThembaNeural",
-}
-
 ESPEAK_VOICES = {
     "en": "en-us",
     "pt": "pt-br",
@@ -244,10 +157,6 @@ ESPEAK_VOICES = {
     "he": "he",
     "uk": "uk",
 }
-
-EDGE_TTS_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
-EDGE_CHROMIUM = "143.0.3650.75"
-EDGE_VOICE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)+$")
 
 
 @dataclass
@@ -321,14 +230,6 @@ def translate_code(code: str) -> str:
     if n in {"pt", "pt-PT", "pt-BR"}:
         return "pt"
     return n
-
-
-def edge_voice(lang: str) -> str | None:
-    n = normalize_lang(lang)
-    voice = EDGE_VOICES.get(n) or EDGE_VOICES.get(n.split("-")[0] if n else "")
-    if not voice or not EDGE_VOICE_RE.fullmatch(voice):
-        return None
-    return voice
 
 
 def google_tts_langs(lang: str) -> list[str]:
@@ -908,42 +809,6 @@ def cache_put(key: str, result: Translation) -> None:
     write_private(CACHE_PATH, json.dumps(data, ensure_ascii=False))
 
 
-def is_word_query(text: str) -> bool:
-    compact = text.strip()
-    if "\n" in compact:
-        return False
-    words = compact.split()
-    return 1 <= len(words) <= 3 and len(compact) <= 48
-
-
-def maybe_definition(cfg: Config, word: str) -> str:
-    if cfg.engine == "libretranslate" or not word:
-        return ""
-    return fetch_definition(word)
-
-
-def fetch_definition(word: str) -> str:
-    cleaned = re.sub(r"[^\w\s'-]", "", word).strip()
-    if not cleaned:
-        return ""
-    slug = cleaned.split()[0]
-    try:
-        payload = http_json(f"https://api.dictionaryapi.dev/api/v2/entries/en/{slug}")
-    except RuntimeError:
-        return ""
-    if not isinstance(payload, list) or not payload:
-        return ""
-    meanings = payload[0].get("meanings") or []
-    if not meanings:
-        return ""
-    defs = meanings[0].get("definitions") or []
-    if not defs:
-        return ""
-    part = meanings[0].get("partOfSpeech") or ""
-    text = str(defs[0].get("definition") or "").strip()
-    if not text:
-        return ""
-    return f"{part}: {text}" if part else text
 
 
 TESSERACT_LANGS = {
@@ -1078,8 +943,6 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
             skipped=True,
             redacted=did_redact,
         )
-        if is_word_query(cleaned):
-            result.definition = maybe_definition(cfg, cleaned if detected == "en" else "")
         history_add(cleaned, result)
         return result
 
@@ -1096,8 +959,6 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
             cached=True,
             redacted=did_redact,
         )
-        if is_word_query(cleaned):
-            result.definition = maybe_definition(cfg, result.text if dst == "en" else cleaned)
         history_add(cleaned, result)
         return result
 
@@ -1117,8 +978,6 @@ def translate_text(cfg: Config, text: str, source: str | None = None, target: st
     result.redacted = did_redact
     cache_put(key, result)
     result.text = restore_tokens(restore_tokens(result.text, secret_map), gloss_map)
-    if is_word_query(cleaned):
-        result.definition = maybe_definition(cfg, result.text if dst == "en" else cleaned)
     history_add(cleaned, result)
     return result
 
@@ -1222,175 +1081,6 @@ def _google_tts_mp3(text: str, lang: str) -> bytes | None:
     return None
 
 
-def _sec_ms_gec() -> str:
-    ticks = time.time() + 11_644_473_600
-    ticks -= ticks % 300
-    ticks *= 1e9 / 100
-    return hashlib.sha256(f"{ticks:.0f}{EDGE_TTS_TOKEN}".encode("ascii")).hexdigest().upper()
-
-
-def _ws_send(sock: ssl.SSLSocket, data: bytes | str, opcode: int = 1) -> None:
-    payload = data if isinstance(data, bytes) else data.encode("utf-8")
-    mask = os.urandom(4)
-    header = bytearray([0x80 | opcode])
-    n = len(payload)
-    if n < 126:
-        header.append(0x80 | n)
-    elif n < 65536:
-        header.append(0x80 | 126)
-        header.extend(struct.pack(">H", n))
-    else:
-        header.append(0x80 | 127)
-        header.extend(struct.pack(">Q", n))
-    header.extend(mask)
-    sock.sendall(header + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
-
-
-def _ws_frame_length(length: int) -> int:
-    if length < 0 or length > MAX_HTTP_BODY:
-        raise ValueError("websocket frame too large")
-    return length
-
-
-def _ws_recv(sock: ssl.SSLSocket) -> tuple[int, bytes]:
-    def recvn(n: int) -> bytes:
-        out = b""
-        while len(out) < n:
-            chunk = sock.recv(n - len(out))
-            if not chunk:
-                raise EOFError("websocket closed")
-            out += chunk
-        return out
-
-    b1, b2 = recvn(2)
-    opcode = b1 & 0x0F
-    length = b2 & 0x7F
-    if length == 126:
-        length = struct.unpack(">H", recvn(2))[0]
-    elif length == 127:
-        length = struct.unpack(">Q", recvn(8))[0]
-    length = _ws_frame_length(length)
-    if b2 & 0x80:
-        mask = recvn(4)
-        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(recvn(length)))
-    else:
-        payload = recvn(length)
-    return opcode, payload
-
-
-def _edge_tts_mp3(text: str, lang: str) -> bytes | None:
-    voice = edge_voice(lang)
-    if not voice:
-        return None
-    locale = "-".join(voice.split("-")[:2])
-    body = html.escape(text[:1500], quote=True)
-    host = "speech.platform.bing.com"
-    conn_id = uuid.uuid4().hex
-    path = (
-        "/consumer/speech/synthesize/readaloud/edge/v1"
-        f"?TrustedClientToken={EDGE_TTS_TOKEN}"
-        f"&ConnectionId={conn_id}"
-        f"&Sec-MS-GEC={_sec_ms_gec()}"
-        f"&Sec-MS-GEC-Version=1-{EDGE_CHROMIUM}"
-    )
-    ua = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
-    )
-    key = base64_ws_key()
-    request = (
-        f"GET {path} HTTP/1.1\r\n"
-        f"Host: {host}\r\n"
-        "Pragma: no-cache\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        f"Sec-WebSocket-Key: {key}\r\n"
-        "Sec-WebSocket-Version: 13\r\n"
-        "Origin: chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold\r\n"
-        f"User-Agent: {ua}\r\n"
-        "Accept-Language: en-US,en;q=0.9\r\n"
-        f"Cookie: muid={secrets.token_hex(16).upper()};\r\n"
-        "\r\n"
-    )
-    sock: ssl.SSLSocket | None = None
-    try:
-        raw_sock = socket.create_connection((host, 443), timeout=20)
-        sock = ssl.create_default_context().wrap_socket(raw_sock, server_hostname=host)
-        sock.settimeout(20)
-        sock.sendall(request.encode("ascii"))
-        buf = b""
-        while b"\r\n\r\n" not in buf:
-            chunk = sock.recv(4096)
-            if not chunk:
-                return None
-            buf += chunk
-            if len(buf) > 8192:
-                return None
-        status = buf.split(b"\r\n", 1)[0]
-        if b" 101 " not in status:
-            return None
-        ts = int(time.time() * 1e9)
-        _ws_send(
-            sock,
-            f"X-Timestamp:{ts}\r\n"
-            "Content-Type:application/json; charset=utf-8\r\n"
-            "Path:speech.config\r\n\r\n"
-            '{"context":{"synthesis":{"audio":{"metadataoptions":'
-            '{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},'
-            '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n',
-        )
-        _ws_send(
-            sock,
-            f"X-RequestId:{uuid.uuid4().hex}\r\n"
-            "Content-Type:application/ssml+xml\r\n"
-            f"X-Timestamp:{ts}Z\r\n"
-            "Path:ssml\r\n\r\n"
-            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' "
-            f"xml:lang='{locale}'><voice name='{voice}'>{body}</voice></speak>",
-        )
-        audio = b""
-        for _ in range(80):
-            opcode, payload = _ws_recv(sock)
-            if opcode == 0x8:
-                break
-            if opcode == 0x9:
-                _ws_send(sock, payload, opcode=0xA)
-                continue
-            if opcode == 1:
-                if b"Path:turn.end" in payload:
-                    break
-                continue
-            if opcode != 2 or len(payload) < 2:
-                continue
-            hlen = int.from_bytes(payload[:2], "big")
-            if hlen < 0 or 2 + hlen > len(payload):
-                continue
-            header = payload[2 : 2 + hlen].decode("utf-8", "replace")
-            chunk = payload[2 + hlen :]
-            if "Path:audio" in header and "metadata" not in header.lower():
-                audio += chunk
-                if len(audio) > MAX_HTTP_BODY:
-                    return None
-        if len(audio) < 800:
-            return None
-        if audio.startswith(b"ID3") or (audio[0] == 0xFF and (audio[1] & 0xE0) == 0xE0):
-            return audio
-        return None
-    except (OSError, EOFError, TimeoutError, ssl.SSLError, struct.error, ValueError):
-        return None
-    finally:
-        if sock is not None:
-            try:
-                sock.close()
-            except OSError:
-                pass
-
-
-def base64_ws_key() -> str:
-    return base64.b64encode(os.urandom(16)).decode("ascii")
-
-
 def _ffmpeg_concat_line(path: Path) -> str:
     return "file '" + str(path).replace("'", "'\\''") + "'\n"
 
@@ -1449,11 +1139,6 @@ def speak_text(text: str, lang: str, *, allow_network: bool = True) -> None:
     dest = runtime_dir() / "speak.mp3"
     can_play = have("ffplay") or have("mpv")
     if allow_network and can_play:
-        edge = _edge_tts_mp3(clipped, lang)
-        if edge:
-            dest.write_bytes(edge)
-            os.chmod(dest, 0o600)
-            _play_exec(dest)
         blobs: list[bytes] = []
         for piece in uttered:
             blob = _google_tts_mp3(piece, lang)
@@ -1916,8 +1601,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("prefs", "init", "history", "detect", "speak", "setup-lt", "ocr-langs", "ensure-dir", "copy", "locale"),
-        help="prefs, init, history, detect, speak, setup-lt, ocr-langs, ensure-dir, copy, or locale",
+        choices=("prefs", "init", "history", "detect", "speak", "ocr-langs", "ensure-dir", "copy", "locale"),
+        help="prefs, init, history, detect, speak, ocr-langs, ensure-dir, copy, or locale",
     )
     parser.add_argument("--text", help="Translate this text instead of the clipboard")
     parser.add_argument("--file", help="Read text to translate from a file")
@@ -1927,10 +1612,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--engine", choices=ENGINES, help="Override the configured engine")
     parser.add_argument("--grab", choices=GRAB_MODES, help="Where to read text from")
     parser.add_argument("--libretranslate-url", help="LibreTranslate base URL")
-    parser.add_argument(
-        "--libretranslate-key",
-        help="Deprecated: appears in process lists. Set OMARCHY_TRANSLATE_LT_KEY instead.",
-    )
     parser.add_argument("--json", action="store_true", help="Print a JSON result and exit")
     parser.add_argument("--copy", action="store_true", help="Copy the translation to the clipboard")
     parser.add_argument("--no-fallback", action="store_true", help="Do not try other engines if the first fails")
@@ -1967,8 +1648,6 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
     env_key = os.environ.get("OMARCHY_TRANSLATE_LT_KEY", "")
     if env_key:
         cfg.libretranslate_api_key = env_key
-    elif args.libretranslate_key:
-        cfg.libretranslate_api_key = args.libretranslate_key
     else:
         key_path = runtime_key_path()
         if key_path.is_file() and not key_path.is_symlink():
@@ -2034,12 +1713,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "locale":
         print(json.dumps({"system": system_language()}, ensure_ascii=False))
         return 0
-
-    if args.command == "setup-lt":
-        script = Path(__file__).resolve().parent / "omarchy-translate-setup-lt"
-        if not script.is_file():
-            fail("setup script missing: " + str(script))
-        raise SystemExit(subprocess.call([str(script)]))
 
     if args.command == "prefs":
         if not tty():

@@ -37,8 +37,8 @@ In the panel:
 
 - Swap languages **and** text, or pin the current pair.
 - Recent targets appear first (★).
-- Speak original or translation with a neural voice (Microsoft Edge,
-  then Google TTS). LibreTranslate stays offline and uses `espeak-ng`.
+- Speak original or translation (Google TTS, then `espeak-ng`).
+  LibreTranslate stays local and uses `espeak-ng`.
 - Paste the translation into the focused app.
 - Toggle auto-copy and clipboard watch (dot on the bar icon when the
   clipboard looks like another language).
@@ -83,12 +83,9 @@ Copy [`config/glossary.example.json`](config/glossary.example.json) to
 `~/.config/omarchy-translate/glossary.json` to keep extra names untranslated.
 
 Same-language text is not sent to a translator. URLs, emails, and common
-API tokens are redacted before a network call. Short selections also
-show an English dictionary gloss. Translations are cached locally for a
-week. Drop a `.txt` or `.srt` file on the panel to translate it. The
-document icon OCRs a screen region. If tessdata for the current From
-language is missing, it opens a terminal to install that
-`tesseract-data-*` pack (not only Portuguese).
+API tokens are redacted before a network call. Translations are cached
+locally for a week. Drop a `.txt` or `.srt` file on the panel to
+translate it. The document icon OCRs a screen region.
 
 ## Engines
 
@@ -97,9 +94,11 @@ unless you pass `--no-fallback`. **LibreTranslate never falls back** to
 Google or MyMemory — a down local instance is an error, not a leak.
 
 The LibreTranslate API key is read from a 0600 file under
-`$XDG_RUNTIME_DIR` (or `OMARCHY_TRANSLATE_LT_KEY`), never from process
+`$XDG_RUNTIME_DIR` or `OMARCHY_TRANSLATE_LT_KEY`, never from process
 arguments. Copy uses `omarchy-translate copy --file`, so the
-translation is not visible in `ps`.
+translation is not visible in `ps`. Speak uses Google TTS when the
+engine is Google or MyMemory, then `espeak-ng`. LibreTranslate speak
+stays local.
 
 | Engine | What it is | Off-machine |
 |---|---|---|
@@ -107,15 +106,9 @@ translation is not visible in `ps`.
 | **mymemory** | Free Translated.net API, ~5k chars/day | Yes |
 | **libretranslate** | Open-source Argos Translate | Only if the URL is remote |
 
-Local LibreTranslate (Docker), pinned to v1.9.6 by image digest:
-
-```sh
-bin/omarchy-translate-setup-lt
-```
-
-Then set Engine to LibreTranslate in the panel. That setup script does
-not follow `libretranslate/libretranslate:latest`, binds only to
-`127.0.0.1:5000`, and only accepts `http(s)` LibreTranslate URLs.
+Point Engine at a LibreTranslate URL you already run (default
+`http://127.0.0.1:5000`). Only `http`/`https` URLs are accepted. This
+plugin does not start Docker.
 
 Lists, blank-line paragraphs, and simple HTML tags are preserved when
 translating.
@@ -128,8 +121,7 @@ Typical Omarchy already has Python 3.11+, `wl-clipboard`, `grim`,
 Optional:
 
 - `espeak-ng` — local fallback when speaking with LibreTranslate, or if
-  neural TTS is unavailable.
-- `docker` — local LibreTranslate (`bin/omarchy-translate-setup-lt`)
+  Google TTS is unavailable.
 - extra Tesseract language data for OCR besides English
 
 ```sh

@@ -99,18 +99,9 @@ class SpeakLangTests(HelperMixin):
         self.assertEqual(self.mod.normalize_lang("pt"), "pt")
         self.assertEqual(self.mod.normalize_lang("pt-PT"), "pt-PT")
         self.assertEqual(self.mod.translate_code("pt-PT"), "pt")
-        self.assertEqual(self.mod.edge_voice("pt"), "pt-BR-AntonioNeural")
-        self.assertEqual(self.mod.edge_voice("pt-PT"), "pt-PT-DuarteNeural")
-        self.assertEqual(self.mod.edge_voice("uk"), "uk-UA-OstapNeural")
-        self.assertNotIn("uk", self.mod.edge_voice("pt"))
         self.assertEqual(self.mod.google_tts_langs("pt")[0], "pt-BR")
         self.assertEqual(self.mod.espeak_voice("pt"), "pt-br")
         self.assertEqual(self.mod.espeak_voice("uk"), "uk")
-
-    def test_ssml_escapes_user_text(self):
-        escaped = self.mod.html.escape("hi <script> & 'x'", quote=True)
-        self.assertIn("&lt;script&gt;", escaped)
-        self.assertNotIn("<script>", escaped)
 
     def test_language_list_covers_major_families(self):
         codes = {code for code, _ in self.mod.LANGUAGES}
@@ -134,17 +125,16 @@ class EngineOrderTests(HelperMixin):
 
 
 class KeyHandlingTests(HelperMixin):
-    def test_env_key_wins_over_cli_flag(self):
-        args = self.mod.parse_args(["--engine", "libretranslate", "--libretranslate-key", "cli-secret"])
+    def test_env_key_wins(self):
+        args = self.mod.parse_args(["--engine", "libretranslate"])
         cfg = self.mod.Config()
         with patch.dict(os.environ, {"OMARCHY_TRANSLATE_LT_KEY": "env-secret"}):
             cfg = self.mod.apply_overrides(cfg, args)
         self.assertEqual(cfg.libretranslate_api_key, "env-secret")
 
-    def test_cli_key_used_when_env_missing(self):
-        args = self.mod.parse_args(["--libretranslate-key", "cli-secret"])
-        cfg = self.mod.apply_overrides(self.mod.Config(), args)
-        self.assertEqual(cfg.libretranslate_api_key, "cli-secret")
+    def test_cli_key_flag_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            self.mod.parse_args(["--libretranslate-key=cli-secret"])
 
     def test_empty_key_file_does_not_wipe_existing_key(self):
         folder = Path(self._tmpdir.name) / "omarchy-translate"
@@ -196,16 +186,10 @@ class LibreTranslateIsolationTests(HelperMixin):
             google.assert_not_called()
             mymemory.assert_not_called()
 
-    def test_lt_skip_does_not_call_dictionary(self):
-        cfg = self.mod.Config(engine="libretranslate", fallback=True, source="auto", target="en")
-        with (
-            patch.object(self.mod, "detect_language", return_value="en"),
-            patch.object(self.mod, "fetch_definition") as gloss,
-            patch.object(self.mod, "history_add"),
-        ):
-            result = self.mod.translate_text(cfg, "cat")
-        self.assertTrue(result.skipped)
-        gloss.assert_not_called()
+    def test_helper_has_no_dictionary_vendor(self):
+        helperSrc = (ROOT / "bin" / "omarchy-translate").read_text(encoding="utf-8")
+        self.assertNotIn("dictionaryapi.dev", helperSrc)
+        self.assertFalse(hasattr(self.mod, "fetch_definition"))
 
     def test_lt_detect_failure_does_not_fall_back_to_google(self):
         cfg = self.mod.Config(engine="libretranslate")
@@ -393,11 +377,6 @@ class OcrLangsTests(HelperMixin):
 
 
 class BoundAndEscapeTests(HelperMixin):
-    def test_websocket_frame_over_cap_is_rejected(self):
-        self.assertEqual(self.mod._ws_frame_length(16), 16)
-        with self.assertRaises(ValueError):
-            self.mod._ws_frame_length(self.mod.MAX_HTTP_BODY + 1)
-
     def test_ffmpeg_concat_escapes_quotes_in_paths(self):
         line = self.mod._ffmpeg_concat_line(Path("/tmp/omarchy-translate/it''s.mp3"))
         self.assertTrue(line.startswith("file '"))
@@ -435,11 +414,6 @@ class BoundAndEscapeTests(HelperMixin):
             out = self.mod.wl_paste("clipboard")
         self.assertEqual(len(out), self.mod.MAX_TEXT_BYTES)
 
-    def test_edge_voice_rejects_injected_ssml_name(self):
-        self.assertIsNone(self.mod.edge_voice("pt\"/><break>"))
-        self.assertEqual(self.mod.edge_voice("pt"), "pt-BR-AntonioNeural")
-
-
 class FeaturePathTests(HelperMixin):
     def test_copy_reads_regular_file_and_not_symlink(self):
         path = Path(self._tmpdir.name) / "copy.txt"
@@ -475,7 +449,9 @@ class FeaturePathTests(HelperMixin):
 class StaticReviewTests(unittest.TestCase):
     def test_panel_does_not_put_api_key_on_argv(self):
         text = (ROOT / "Panel.qml").read_text(encoding="utf-8")
+        helperSrc = (ROOT / "bin" / "omarchy-translate").read_text(encoding="utf-8")
         self.assertNotIn("--libretranslate-key", text)
+        self.assertNotIn("--libretranslate-key", helperSrc)
         self.assertNotIn("OMARCHY_TRANSLATE_LT_KEY", text)
         self.assertIn("lt.key", text)
         self.assertIn("--no-fallback", text)
@@ -489,12 +465,12 @@ class StaticReviewTests(unittest.TestCase):
         self.assertNotIn('CLIP="/tmp/omarchy-translate-clip.txt"', ocr)
         self.assertIn("XDG_RUNTIME_DIR", ocr)
 
-    def test_setup_lt_is_digest_pinned(self):
-        text = (ROOT / "bin" / "omarchy-translate-setup-lt").read_text(encoding="utf-8")
-        self.assertRegex(text, r'IMAGE="libretranslate/libretranslate:v1\.9\.6@sha256:[0-9a-f]{64}"')
-        self.assertNotRegex(text, r'IMAGE="[^"]*:latest"')
-        self.assertIn("-p 127.0.0.1:5000:5000", text)
-        self.assertNotRegex(text, r"-p 5000:5000")
+    def test_setup_lt_is_not_shipped(self):
+        self.assertFalse((ROOT / "bin" / "omarchy-translate-setup-lt").exists())
+        helperSrc = (ROOT / "bin" / "omarchy-translate").read_text(encoding="utf-8")
+        self.assertNotIn("setup-lt", helperSrc)
+        self.assertNotIn("speech.platform.bing.com", helperSrc)
+        self.assertNotIn("TrustedClientToken", helperSrc)
 
     def test_drop_requires_txt_or_srt_suffix(self):
         text = (ROOT / "Panel.qml").read_text(encoding="utf-8")
@@ -600,8 +576,9 @@ class StaticReviewTests(unittest.TestCase):
         self.assertIn("--no-fallback", bar)
         helperSrc = (ROOT / "bin" / "omarchy-translate").read_text(encoding="utf-8")
         self.assertIn("allow_network=cfg.engine != \"libretranslate\"", helperSrc)
-        self.assertIn("_ws_frame_length", helperSrc)
         self.assertIn("_ffmpeg_concat_line", helperSrc)
+        self.assertNotIn("speech.platform.bing.com", helperSrc)
+        self.assertNotIn("dictionaryapi.dev", helperSrc)
 
     def test_manifest_id_is_not_omarchy_reserved(self):
         import json
