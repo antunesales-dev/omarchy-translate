@@ -466,16 +466,7 @@ Panel {
   }
 
   function installSpeech() {
-    Quickshell.execDetached([
-      "xdg-terminal-exec",
-      "-e",
-      "bash",
-      "-c",
-      'echo "Translate needs espeak-ng to speak."; omarchy pkg add "$1"; echo; echo Done. Click speak again. Press Enter.; read',
-      "omarchy-translate-speech",
-      "espeak-ng"
-    ])
-    root.speakStatus = "Installing espeak-ng — password in the terminal, then click speak again"
+    root.speakStatus = "Need ffplay, mpv, or espeak-ng installed to speak"
   }
 
   function speak(which) {
@@ -639,24 +630,6 @@ Panel {
     for (var k in root.ocrTess)
       if (root.ocrTess[k] === c) return true
     return false
-  }
-
-  function installOcrLang(code) {
-    var c = String(code || "")
-    if (!/^[a-z0-9_]+$/.test(c) || !root.knownTessCode(c)) return
-    if (root.ocrInstalled.indexOf(c) !== -1) {
-      root.captureOcr()
-      return
-    }
-    Quickshell.execDetached([
-      "xdg-terminal-exec",
-      "-e",
-      "bash",
-      "-c",
-      'omarchy pkg add "tesseract-data-$1"; echo; echo Done. Press Enter.; read',
-      "omarchy-translate-ocr",
-      c
-    ])
   }
 
   function historySnippet(s, n) {
@@ -1089,15 +1062,10 @@ Panel {
             width: Style.space(28)
             iconText: "󰺯"
             iconSize: Style.font.body
-            tooltipText: root.ocrWantedReady ? "OCR a region" : "Install OCR language for From"
+            tooltipText: "OCR a region"
             foreground: root.ocrWantedReady ? root.accent : root.fg
             fontFamily: root.fontFamily
-            onClicked: {
-              if (root.ocrWantedReady)
-                root.captureOcr()
-              else if (root.ocrWanted)
-                root.installOcrLang(root.ocrWanted)
-            }
+            onClicked: root.captureOcr()
           }
         }
 

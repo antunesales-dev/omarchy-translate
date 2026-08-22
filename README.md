@@ -128,10 +128,9 @@ Typical Omarchy already has Python 3.11+, `wl-clipboard`, `grim`,
 Optional:
 
 - `espeak-ng` — local fallback when speaking with LibreTranslate, or if
-  neural TTS is unavailable. The speaker button opens a terminal to
-  install it if missing.
-- `docker` — local LibreTranslate
-- `tesseract-data-*` for extra OCR languages (From language in the panel)
+  neural TTS is unavailable.
+- `docker` — local LibreTranslate (`bin/omarchy-translate-setup-lt`)
+- extra Tesseract language data for OCR besides English
 
 ```sh
 bin/omarchy-translate --json --text "Olá mundo"
